@@ -1,0 +1,20 @@
+{
+  "name": "sander",
+  "version": "0.1.0",
+  "description": "AI-agent sandbox manager CLI",
+  "private": true,
+  "bin": {
+    "sander": "./bin/sander.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && vitest run",
+    "test:smoke": "npm run build && vitest run --config vitest.smoke.config.mts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
