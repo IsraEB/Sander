@@ -62,22 +62,26 @@ global config. sander then always asks interactively for the configurable keys
 — even when they are already configured — showing the current value as the default
 (Enter keeps it). Keys provided via --provider/--harness/--token are never re-asked,
 so "sander config --provider docker --harness codex --token <t>" runs with zero prompts.
-The token prompt always starts blank: pressing Enter leaves the current token (if any)
-untouched; typing a value sets or replaces it. To remove a token use "sander config unset token".
+The token prompt always starts blank and hides what you type (no echo): pressing
+Enter leaves the current token (if any) untouched; typing a value sets or replaces
+it. To remove a token use "sander config unset token". Bulk output redacts the
+token (config list, config get with no key, and the final print of bare
+"sander config" show "token = ***"); only an explicit "sander config get token"
+prints the real value.
 In a non-terminal environment bare "sander config" fails with an actionable
 error instead: run "sander config list" to view the current config or
 "sander config set <key> <value>" to change it.
 
 Commands:
   set <key> <value>    Set a value (provider, harness, token, yolo, or env.<KEY>)
-  get [<key>]          Print a value, or the whole config
+  get [<key>]          Print a value, or the whole config (the token is redacted in whole-config output)
   unset <key>          Remove a key (provider, harness, token, yolo, or env.<KEY>)
   list                 Print all configured keys
 
 Options:
   --provider <name>  Write the provider to the global config
   --harness <name>   Write the harness to the global config
-  --token <token>    Write the token to the global config (the wizard asks for it only when the flag is not passed)
+  --token <token>    Write the token to the global config (the wizard asks for it only when the flag is not passed; a whitespace-only value is ignored, like leaving the prompt blank)
   --yolo <true|false>  Write the yolo default to the global config (never asked for)
   --global           Operate on the global config (default)
   --workspace        Operate on the workspace config

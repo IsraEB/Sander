@@ -7,6 +7,7 @@ import type { ProviderName } from '../provider/providers';
 import { runSelector } from '../selector/selector';
 import type { KeySource, SelectOption } from '../selector/selector';
 import { readLineSync } from '../process/tty';
+import { spawnSync } from 'node:child_process';
 
 interface Question {
   label: string;
@@ -63,6 +64,43 @@ export function createPrompt(
   };
 }
 
+// Best-effort stty echo toggle on the TTY fd. If stty is missing or fails
+// (non-POSIX platform), the read falls back to the visible prompt — the
+// same behavior as before this correction. Platform is linux/macOS.
+function setEcho(fd: number, enabled: boolean): void {
+  const result = spawnSync('stty', [enabled ? 'echo' : '-echo'], { stdio: [fd, 'ignore', 'ignore'] });
+  if (result.error !== undefined || result.status !== 0) {
+    // ignore: keep going with whatever echo state the terminal has
+  }
+}
+
+// The secret prompt adapter: same reading primitive as createPrompt, but the
+// TTY echo is disabled while the answer is typed so a secret never appears in
+// the terminal output. It falls back to the visible prompt when stty fails.
+export function createSecretPrompt(
+  input: NodeJS.ReadableStream | undefined,
+  output: NodeJS.WritableStream,
+): (question: string) => string | undefined {
+  return (question: string): string | undefined => {
+    const tty = input as unknown as { isTTY?: boolean; fd?: number } | undefined;
+    if (!tty || !tty.isTTY || typeof tty.fd !== 'number') {
+      return undefined;
+    }
+    output.write(question);
+    setEcho(tty.fd, false);
+    try {
+      const line = readLineSync(tty.fd);
+      // The terminal never echoes the Enter that ends a hidden read, so move
+      // to a fresh line ourselves; without this the next output would run
+      // onto the prompt line.
+      output.write('\n');
+      return line;
+    } finally {
+      setEcho(tty.fd, true);
+    }
+  };
+}
+
 export function missingKeysError(missing: RequiredKey[]): CliError {
   const flags = missing.map((key) => `--${key} ${QUESTIONS[key].default}`).join(' ');
   return new CliError(
@@ -98,6 +136,7 @@ export interface WizardDeps {
   output: NodeJS.WritableStream;
   keySource?: KeySource;
   prompt?: (question: string) => string | undefined;
+  promptSecret?: (question: string) => string | undefined;
 }
 
 // The wizard runs only when it can interact: an injectable key source (tests)
@@ -139,8 +178,10 @@ async function askForKey(deps: WizardDeps, key: RequiredKey, current: string, as
   return result.option.value;
 }
 
-// The token question is free text (never a closed list) through the existing
-// prompt seam. It always starts blank so the secret is never echoed back or
+// The token question is free text (never a closed list) through the secret
+// prompt seam: the real adapter hides what is typed (no echo), while the plain
+// prompt is used as the fallback when no secret adapter was provided (tests and
+// non-TTY callers). It always starts blank so an existing secret is never
 // prefilled: leaving it blank keeps the current token (or leaves it unset).
 // There is no validation — any non-empty text is accepted.
 function askForToken(deps: WizardDeps, current: string | undefined): string | undefined {
@@ -148,7 +189,8 @@ function askForToken(deps: WizardDeps, current: string | undefined): string | un
     current === undefined || current.trim() === ''
       ? 'optional; leave blank for none'
       : 'currently set; leave blank to keep it';
-  const raw = deps.prompt ? deps.prompt(`Token (${state}): `) : undefined;
+  const prompt = deps.promptSecret ?? deps.prompt;
+  const raw = prompt ? prompt(`Token (${state}): `) : undefined;
   if (raw === undefined) {
     return undefined; // no answer (EOF / non-writing prompt): keep the current value
   }

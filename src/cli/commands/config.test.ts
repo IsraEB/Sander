@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -11,6 +11,7 @@ import { runCli } from '../main';
 import type { CliDeps } from '../deps';
 import type { KeySource, SelectorKey } from '../../selector/selector';
 import { configPath } from '../../config/config';
+import * as configModule from '../../config/config';
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'sander-config-cli-test-'));
@@ -182,7 +183,7 @@ describe('sander config', () => {
     expect(ctx.stderr.text()).toContain('empty value');
   });
 
-  it('sets and lists a token', async () => {
+  it('sets a token and list redacts it', async () => {
     const configDir = tmpDir();
     const project = tmpDir();
     const ctx = makeCtx(configDir);
@@ -191,7 +192,49 @@ describe('sander config', () => {
     ctx.stdout.reset();
     const code = await runIn(project, ctx, ['config', 'list']);
     expect(code).toBe(0);
-    expect(ctx.stdout.text()).toContain('token = ghp_secret');
+    expect(ctx.stdout.text()).toContain('token = ***');
+    expect(ctx.stdout.text()).not.toContain('ghp_secret');
+  });
+
+  it('returns the real token value on an explicit config get token', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(configDir);
+
+    await runIn(project, ctx, ['config', 'set', 'token', 'ghp_secret']);
+    ctx.stdout.reset();
+    const code = await runIn(project, ctx, ['config', 'get', 'token']);
+    expect(code).toBe(0);
+    expect(ctx.stdout.text()).toBe('ghp_secret\n');
+  });
+
+  it('redacts the token in config get with no key', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(configDir);
+
+    await runIn(project, ctx, ['config', 'set', 'token', 'ghp_secret']);
+    ctx.stdout.reset();
+    const code = await runIn(project, ctx, ['config', 'get']);
+    expect(code).toBe(0);
+    expect(ctx.stdout.text()).toContain('token = ***');
+    expect(ctx.stdout.text()).not.toContain('ghp_secret');
+  });
+
+  it('trims the token on set but never trims env.<KEY> values', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(configDir);
+
+    const setToken = await runIn(project, ctx, ['config', 'set', 'token', '  ghp_secret  ']);
+    expect(setToken).toBe(0);
+    expect(ctx.stdout.text()).toContain('Set token to "ghp_secret"');
+    expect(readConfigFile(configDir)).toEqual({ token: 'ghp_secret' });
+
+    ctx.stdout.reset();
+    const setEnv = await runIn(project, ctx, ['config', 'set', 'env.SPACEY', '  keep spaces  ']);
+    expect(setEnv).toBe(0);
+    expect(readConfigFile(configDir)).toEqual({ token: 'ghp_secret', env: { SPACEY: '  keep spaces  ' } });
   });
 
   it('sets yolo as a real boolean and get/list/unset handle it', async () => {
@@ -548,6 +591,36 @@ describe('sander config', () => {
     const code = await runIn(project, ctx, ['config']);
     expect(code).toBe(0);
     expect(readConfigFile(configDir)).toEqual({ provider: 'docker', harness: 'opencode', token: 'ghp_secret' });
+    expect(ctx.stdout.text()).toContain('token = ***');
+    expect(ctx.stdout.text()).not.toContain('ghp_secret');
+  });
+
+  it('does not rewrite the config when the non-TTY wizard changes nothing', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(configDir);
+    const spy = vi.spyOn(configModule, 'saveConfig');
+
+    try {
+      const code = await runIn(project, ctx, ['config', '--provider', 'docker', '--harness', 'codex']);
+      expect(code).toBe(0);
+      // One write: the applyConfigFlags save. The token-only wizard must skip
+      // its own save because it changes nothing in a non-TTY.
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(readConfigFile(configDir)).toEqual({ provider: 'docker', harness: 'codex' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('treats a whitespace-only --token as not passed', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(configDir, () => 'ghp_wiz', keysSource(['enter', 'enter']));
+
+    const code = await runIn(project, ctx, ['config', '--provider', 'docker', '--harness', 'codex', '--token', '   ']);
+    expect(code).toBe(0);
+    expect(readConfigFile(configDir)).toEqual({ provider: 'docker', harness: 'codex', token: 'ghp_wiz' });
   });
 
   it('bare config keeps an existing token when the wizard prompt is blank', async () => {
