@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { CaptureStream } from '../../../test/helpers/capture-stream';
 import { FakeProvider } from '../../provider/fake';
 import type { ProviderOp } from '../../provider/fake';
@@ -12,9 +14,23 @@ import type { CliDeps } from '../deps';
 import type { CommandRunner } from '../../process/run';
 import { emptyRegistry, saveRegistry, upsertBox } from '../../registry/registry';
 import type { Sandbox } from '../../registry/registry';
+import { removeState, writePid } from '../../sync/watcher-state';
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'sander-sync-test-'));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function waitForExit(proc: ChildProcess): Promise<void> {
+  if (proc.exitCode !== null || proc.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    proc.once('close', () => resolve());
+  });
 }
 
 interface Ctx {
@@ -461,5 +477,212 @@ describe('sander sync', () => {
     const help = await runCli(['help', 'sync'], ctx.deps);
     expect(help).toBe(0);
     expect(ctx.stdout.text()).toContain('sander sync');
+  });
+});
+
+describe('sander sync --watch', () => {
+  it('writes pid/log under the temp configDir and syncs immediately then periodically', async () => {
+    const configDir = tmpDir();
+    const worktree = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo', { worktreePath: worktree }));
+    setHostStatus(ctx, ' M a.txt\n');
+    simBox(ctx, { status: ' M b.txt\n' });
+    ctx.deps.syncIntervalMs = 10;
+
+    const codePromise = runCli(['sync', 'demo', '--watch'], ctx.deps);
+    await sleep(120);
+
+    const pidPath = path.join(configDir, 'sync', 'demo.pid');
+    const logPath = path.join(configDir, 'sync', 'demo.log');
+    expect(fs.readFileSync(pidPath, 'utf8').trim()).toBe(String(process.pid));
+    expect(fs.readFileSync(logPath, 'utf8')).toContain('sincronizado');
+    expect(ctx.stdout.text()).toContain('Watcher de sync de "demo" activo');
+    // The immediate cycle plus several periodic cycles ran.
+    const statusCalls = execOps(ctx).filter((op) => op.command.join(' ').includes('status --porcelain')).length;
+    expect(statusCalls).toBeGreaterThan(1);
+    expect(copyOps(ctx).length).toBeGreaterThan(0);
+    expect(pullOps(ctx).length).toBeGreaterThan(0);
+
+    removeState(configDir, 'demo');
+    expect(await codePromise).toBe(0);
+  });
+
+  it('skips and logs box-down cycles without aborting the loop', async () => {
+    const configDir = tmpDir();
+    const worktree = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo', { worktreePath: worktree }));
+    setHostStatus(ctx, '');
+    let calls = 0;
+    ctx.provider.execHook = (id, command) => {
+      if (command.join(' ') === 'git -C /workspace status --porcelain -uall') {
+        calls++;
+        if (calls === 1) {
+          return { exitCode: 1, stdout: '', stderr: 'box down' };
+        }
+        return { exitCode: 0, stdout: ' M a.txt\n', stderr: '' };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    ctx.deps.syncIntervalMs = 10;
+
+    const codePromise = runCli(['sync', 'demo', '--watch'], ctx.deps);
+    await sleep(120);
+
+    const log = fs.readFileSync(path.join(configDir, 'sync', 'demo.log'), 'utf8');
+    expect(log).toContain('ciclo omitido');
+    expect(log).toContain('box down');
+    // The loop kept polling after the failure and completed a later cycle.
+    expect(log).toContain('sincronizado');
+
+    removeState(configDir, 'demo');
+    expect(await codePromise).toBe(0);
+  });
+
+  it('logs conflicts from each cycle in the watcher log', async () => {
+    const configDir = tmpDir();
+    const worktree = tmpDir();
+    fs.writeFileSync(path.join(worktree, 'a.txt'), 'host version');
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo', { worktreePath: worktree }));
+    setHostStatus(ctx, ' M a.txt\n');
+    simBox(ctx, { status: ' M a.txt\n', files: { '/workspace/a.txt': 'box version' } });
+    ctx.deps.syncIntervalMs = 10;
+
+    const codePromise = runCli(['sync', 'demo', '--watch'], ctx.deps);
+    await sleep(120);
+
+    const log = fs.readFileSync(path.join(configDir, 'sync', 'demo.log'), 'utf8');
+    expect(log).toContain('1 conflictos');
+
+    removeState(configDir, 'demo');
+    expect(await codePromise).toBe(0);
+  });
+
+  it('refuses a second watch loop while another watcher is running', async () => {
+    const configDir = tmpDir();
+    const worktree = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo', { worktreePath: worktree }));
+    setHostStatus(ctx, '');
+    simBox(ctx, { status: '' });
+    const other = spawn('sleep', ['60'], { stdio: 'ignore' });
+    try {
+      writePid(configDir, 'demo', other.pid ?? -1);
+      const code = await runCli(['sync', 'demo', '--watch'], ctx.deps);
+      expect(code).toBe(0);
+      expect(ctx.stderr.text()).toContain('ya hay un watcher de sync');
+      expect(ctx.stdout.text()).not.toContain('Watcher de sync de "demo" activo');
+      // The existing watcher's pidfile is left untouched.
+      expect(fs.readFileSync(path.join(configDir, 'sync', 'demo.pid'), 'utf8').trim()).toBe(String(other.pid));
+      expect(ctx.provider.ops).toHaveLength(0);
+    } finally {
+      other.kill();
+      removeState(configDir, 'demo');
+    }
+  });
+});
+
+describe('sander sync --stop', () => {
+  it('kills a real watcher pid and cleans pid/log', async () => {
+    const configDir = tmpDir();
+    const worktree = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo', { worktreePath: worktree }));
+    const proc = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    const pid = proc.pid!;
+    writePid(configDir, 'demo', pid);
+    fs.writeFileSync(path.join(configDir, 'sync', 'demo.log'), 'old log\n');
+
+    const code = await runCli(['sync', 'demo', '--stop'], ctx.deps);
+
+    expect(code).toBe(0);
+    expect(ctx.stdout.text()).toContain('Watcher de sync de "demo" detenido');
+    expect(ctx.stdout.text()).toContain(String(pid));
+    await waitForExit(proc);
+    expect(spawnSync('sh', ['-c', `kill -0 ${pid}`]).status).not.toBe(0);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.pid'))).toBe(false);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.log'))).toBe(false);
+  });
+
+  it('warns without failing when --stop finds no watcher', async () => {
+    const configDir = tmpDir();
+    const worktree = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo', { worktreePath: worktree }));
+
+    const code = await runCli(['sync', 'demo', '--stop'], ctx.deps);
+
+    expect(code).toBe(0);
+    expect(ctx.stderr.text()).toContain('Aviso: no hay watcher de sync corriendo para "demo"');
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.pid'))).toBe(false);
+  });
+
+  it('cleans a stale pidfile and warns when --stop finds a dead pid', async () => {
+    const configDir = tmpDir();
+    const worktree = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo', { worktreePath: worktree }));
+    const proc = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+    await waitForExit(proc);
+    writePid(configDir, 'demo', proc.pid!);
+    fs.writeFileSync(path.join(configDir, 'sync', 'demo.log'), 'stale log\n');
+
+    const code = await runCli(['sync', 'demo', '--stop'], ctx.deps);
+
+    expect(code).toBe(0);
+    expect(ctx.stderr.text()).toContain('no hay watcher de sync');
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.pid'))).toBe(false);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.log'))).toBe(false);
+  });
+
+  it('stops the watcher even when the sandbox has no host worktree', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo', { worktreePath: undefined }));
+
+    const code = await runCli(['sync', 'demo', '--stop'], ctx.deps);
+
+    expect(code).toBe(0);
+    expect(ctx.stderr.text()).toContain('no hay watcher de sync');
+    expect(ctx.stdout.text()).not.toContain('sync desactivada');
+  });
+
+  it('errors on --stop for a sandbox not in the registry', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+
+    const code = await runCli(['sync', 'ghost', '--stop'], ctx.deps);
+
+    expect(code).toBe(1);
+    expect(ctx.stderr.text()).toContain('sandbox not found: ghost');
+  });
+});
+
+describe('sander sync flag handling and help', () => {
+  it('errors when --watch and --stop are combined', async () => {
+    const configDir = tmpDir();
+    const worktree = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo', { worktreePath: worktree }));
+
+    const code = await runCli(['sync', 'demo', '--watch', '--stop'], ctx.deps);
+
+    expect(code).toBe(1);
+    expect(ctx.stderr.text()).toContain('excluyentes');
+    expect(ctx.provider.ops).toHaveLength(0);
+  });
+
+  it('documents --watch and --stop in the sync help', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+
+    const code = await runCli(['sync', '--help'], ctx.deps);
+
+    expect(code).toBe(0);
+    expect(ctx.stdout.text()).toContain('--watch');
+    expect(ctx.stdout.text()).toContain('--stop');
+    expect(ctx.stdout.text()).toContain('<configDir>/sync/<id>.pid');
   });
 });

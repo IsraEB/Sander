@@ -17,6 +17,7 @@ export interface CliDeps {
   selectorKeySource?: KeySource;
   gitRunner?: CommandRunner;
   dockerRunner?: AsyncCommandRunner;
+  syncIntervalMs?: number;
   debug?: boolean;
 }
 

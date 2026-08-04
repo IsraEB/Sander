@@ -15,7 +15,7 @@ Commands:
   rm, destroy, delete, remove   Remove a sandbox
   list     List all registered sandboxes
   logs     Show a sandbox's logs
-  sync     Sync the worktree between the box and the host (one-shot)
+  sync     Sync the worktree between the box and the host (one-shot, --watch, --stop)
 
 Options:
   -h, --help  Show this help
@@ -111,7 +111,7 @@ Environment variables are nested under env.<KEY>. The config file always stays v
     case 'logs':
       return `Usage: sander logs [<id> | --sandbox <id>]\n\nShow a sandbox's service log (.sander/start.log) without entering it.`;
     case 'sync':
-      return `Uso: sander sync [<id> | --sandbox <id>]
+      return `Uso: sander sync [<id> | --sandbox <id>] [--watch] [--stop]
 
 Sincroniza el árbol de trabajo entre el box (/workspace) y el worktree del
 host en ambas direcciones, sin tocar la historia git. Detecta los cambios con
@@ -119,6 +119,17 @@ git status --porcelain -uall en cada lado, planifica con planSync y ejecuta
 las transferencias (agentbox cp con --yes, host→box y box→host), los borrados
 (fs.rmSync en el host, rm en el box) y los conflictos. Imprime un resumen:
 copiados box→host, copiados host→box y conflictos.
+
+--watch  Levanta el watcher de sync en foreground: escribe su pid en
+         <configDir>/sync/<id>.pid y anota cada ciclo en
+         <configDir>/sync/<id>.log (ambos fuera del árbol de trabajo, para no
+         sincronizarse consigo mismo). La primera sincronización es inmediata y
+         luego cada 2 s en ambas direcciones. Si el box está caído, el ciclo se
+         omite y se registra en el log sin abortar el bucle (el sandbox puede
+         re-crearse o reiniciarse). Los conflictos de cada ciclo quedan
+         reportados en el log.
+--stop   Detiene el watcher de sync del sandbox por su pidfile y limpia su
+         pid/log. Con el watcher no corriendo avisa sin fallar.
 
 Conflictos (no-interactivo): la versión del host se guarda como backup en
 .sander/<rel>.sander-host y se aplica la del box.
