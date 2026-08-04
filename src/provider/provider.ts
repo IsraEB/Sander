@@ -68,9 +68,11 @@ export interface Provider {
    * Open an interactive pass-through session inside the box. Without a command
    * this is a plain shell; with `command` the command runs inside the session
    * on a PTY (used by the create/attach agent quick-start to launch the box's
-   * harness). The session's exit code is the resolved value.
+   * harness). The session's exit code is the resolved value. `input`, when
+   * given, is written to the session's stdin (followed by a newline) before
+   * the user's terminal is handed over.
    */
-  shell(id: string, opts?: { command?: string[] }): Promise<number>;
+  shell(id: string, opts?: { command?: string[]; input?: string }): Promise<number>;
   exec(id: string, command: string[], opts?: { cwd?: string }): Promise<ExecResult>;
   /**
    * In-box probe: whether a regular file at `path` exists and is executable

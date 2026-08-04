@@ -6,6 +6,7 @@ import { CaptureStream } from '../../../test/helpers/capture-stream';
 import { FakeProvider } from '../../provider/fake';
 import type { ProviderOp } from '../../provider/fake';
 import { FakeHarnessFactory } from '../../harness/fake';
+import type { FakeHarness } from '../../harness/fake';
 import { FakeWorktree } from '../../worktree/fake';
 import { runCli } from '../main';
 import { runAttach } from './attach';
@@ -22,6 +23,7 @@ interface Ctx {
   deps: CliDeps;
   provider: FakeProvider;
   providers: Map<string, FakeProvider>;
+  harnessFactory: FakeHarnessFactory;
   factoryCalls: string[];
   stdout: CaptureStream;
   stderr: CaptureStream;
@@ -44,10 +46,12 @@ function makeCtx(configDir: string): Ctx {
   };
   const provider = new FakeProvider();
   providers.set('docker', provider);
+  const harnessFactory = new FakeHarnessFactory();
   return {
-    deps: { configDir, stdout, stderr, createProvider, harnessFactory: new FakeHarnessFactory(), worktree: new FakeWorktree() },
+    deps: { configDir, stdout, stderr, createProvider, harnessFactory, worktree: new FakeWorktree() },
     provider,
     providers,
+    harnessFactory,
     factoryCalls,
     stdout,
     stderr,
@@ -334,5 +338,83 @@ describe('sander attach', () => {
       { op: 'shell', id: 'demo', command: ['claude'] },
     ]);
     expect(ctx.stderr.text()).toContain('launching claude');
+  });
+
+  it('runAttach passes --agent <name> to the harness launch', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo'));
+    ctx.provider.hasAgentSessionResult = false;
+
+    const code = await runAttach(ctx.deps, ['demo'], { launchHarness: true, agent: 'orquestator' });
+
+    expect(code).toBe(0);
+    expect(ctx.provider.ops).toEqual([
+      { op: 'hasAgentSession', id: 'demo' },
+      { op: 'shell', id: 'demo', command: ['opencode', '--agent', 'orquestator'] },
+    ]);
+  });
+
+  it('runAttach warns and drops --agent for harnesses that do not support it', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo'));
+    ctx.provider.hasAgentSessionResult = false;
+    ctx.harnessFactory.get('opencode').agentArgResult = null;
+
+    const code = await runAttach(ctx.deps, ['demo'], { launchHarness: true, agent: 'orquestator' });
+
+    expect(code).toBe(0);
+    expect(ctx.provider.ops).toEqual([
+      { op: 'hasAgentSession', id: 'demo' },
+      { op: 'shell', id: 'demo', command: ['opencode'] },
+    ]);
+    expect(ctx.stderr.text()).toContain('does not support --agent');
+    expect(ctx.stderr.text()).toContain('ignoring --agent orquestator');
+  });
+
+  it('runAttach injects the prompt into the harness launch', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo'));
+    ctx.provider.hasAgentSessionResult = false;
+
+    const code = await runAttach(ctx.deps, ['demo'], { launchHarness: true, prompt: 'hola' });
+
+    expect(code).toBe(0);
+    expect(ctx.provider.ops).toEqual([
+      { op: 'hasAgentSession', id: 'demo' },
+      { op: 'shell', id: 'demo', command: ['opencode'], input: 'hola' },
+    ]);
+  });
+
+  it('runAttach combines the prompt and the agent argv', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo'));
+    ctx.provider.hasAgentSessionResult = false;
+
+    const code = await runAttach(ctx.deps, ['demo'], { launchHarness: true, prompt: 'hola', agent: 'x' });
+
+    expect(code).toBe(0);
+    expect(ctx.provider.ops).toEqual([
+      { op: 'hasAgentSession', id: 'demo' },
+      { op: 'shell', id: 'demo', command: ['opencode', '--agent', 'x'], input: 'hola' },
+    ]);
+  });
+
+  it('runAttach warns when --agent is ignored on a running session', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo'));
+
+    const code = await runAttach(ctx.deps, ['demo'], { launchHarness: true, agent: 'x' });
+
+    expect(code).toBe(0);
+    expect(ctx.provider.ops).toEqual([
+      { op: 'hasAgentSession', id: 'demo' },
+      { op: 'attach', id: 'demo', opts: { tty: true } },
+    ]);
+    expect(ctx.stderr.text()).toContain('--prompt/--agent are ignored');
   });
 });

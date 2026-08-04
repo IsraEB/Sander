@@ -42,6 +42,10 @@ class AgentHarness implements Harness {
     return this.headlessArgs(prompt);
   }
 
+  agentArg(agent: string): string[] {
+    return ['--agent', agent];
+  }
+
   async headless(opts: HeadlessOptions): Promise<HeadlessResult> {
     const result: RunResult = await this.runner(this.headlessCommand(opts.prompt), {
       cwd: opts.cwd,

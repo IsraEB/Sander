@@ -24,6 +24,14 @@ export interface Harness {
    * harness inside a box prepend `name` and run it via the provider exec seam.
    */
   headlessCommand(prompt: string): string[];
+  /**
+   * The argv (without the binary) that selects a named agent on an interactive
+   * launch, e.g. ['--agent', 'orquestator']. Returns null when the harness CLI
+   * has no --agent flag; the caller then warns and launches without it.
+   * Callers prepend the harness binary and run the result inside the box via
+   * the provider shell seam (mirrors headlessCommand for headless runs).
+   */
+  agentArg(agent: string): string[] | null;
 }
 
 export interface HarnessFactory {

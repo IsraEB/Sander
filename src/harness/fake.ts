@@ -16,6 +16,7 @@ export class FakeHarness implements Harness {
   headlessHook: ((opts: HeadlessOptions) => void) | null = null;
   interactiveExitCode = 0;
   config = '/tmp/fake-harness-config';
+  agentArgResult: string[] | null | undefined = undefined;
 
   constructor(readonly name: string) {}
 
@@ -38,6 +39,10 @@ export class FakeHarness implements Harness {
 
   headlessCommand(prompt: string): string[] {
     return [prompt];
+  }
+
+  agentArg(agent: string): string[] | null {
+    return this.agentArgResult === undefined ? ['--agent', agent] : this.agentArgResult;
   }
 }
 

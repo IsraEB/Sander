@@ -4,7 +4,11 @@ import { resolveSandboxId } from '../args';
 import type { CliDeps } from '../deps';
 import { loadRegistry } from '../../registry/registry';
 
-export async function runAttach(deps: CliDeps, argv: string[], opts: { launchHarness?: boolean } = {}): Promise<number> {
+export async function runAttach(
+  deps: CliDeps,
+  argv: string[],
+  opts: { launchHarness?: boolean; agent?: string; prompt?: string } = {},
+): Promise<number> {
   if (argv.includes('-h') || argv.includes('--help')) {
     deps.stdout.write(helpForCommand('attach'));
     return 0;
@@ -31,6 +35,11 @@ export async function runAttach(deps: CliDeps, argv: string[], opts: { launchHar
   await provider.ensureSetup({ interactive: false }); // writes the marker; attach never runs a wizard
 
   if (await provider.hasAgentSession(id)) {
+    if (opts.prompt !== undefined || opts.agent !== undefined) {
+      deps.stderr.write(
+        `warning: --prompt/--agent are ignored: a session is already running in "${id}"; attaching to it.\n`
+      );
+    }
     const exitCode = await provider.attach(id, { tty: true });
     deps.stdout.write(`Sandbox "${id}" (${box.harness}) session exited with code ${exitCode}.\n`);
     return exitCode;
@@ -38,7 +47,13 @@ export async function runAttach(deps: CliDeps, argv: string[], opts: { launchHar
 
   if (opts.launchHarness === true) {
     deps.stderr.write(`no agent session running in "${id}"; launching ${box.harness}.\n`);
-    const code = await provider.shell(id, { command: [box.harness] });
+    const harness = deps.harnessFactory.get(box.harness);
+    const agentArgs = opts.agent === undefined ? [] : harness.agentArg(opts.agent);
+    if (opts.agent !== undefined && agentArgs === null) {
+      deps.stderr.write(`warning: harness "${box.harness}" does not support --agent; ignoring --agent ${opts.agent}.\n`);
+    }
+    const command = [box.harness, ...(agentArgs ?? [])];
+    const code = await provider.shell(id, { command, input: opts.prompt });
     deps.stdout.write(`Sandbox "${id}" (${box.harness}) session exited with code ${code}.\n`);
     return code;
   }

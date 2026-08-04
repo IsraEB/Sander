@@ -85,6 +85,27 @@ describe('FakeProvider', () => {
     ]);
   });
 
+  it('records shell without a command and with a command', async () => {
+    const provider = new FakeProvider();
+    provider.shellResult = 7;
+    expect(await provider.shell('abc')).toBe(7);
+    expect(await provider.shell('abc', { command: ['opencode'] })).toBe(7);
+
+    expect(provider.ops).toEqual([
+      { op: 'shell', id: 'abc' },
+      { op: 'shell', id: 'abc', command: ['opencode'] },
+    ]);
+  });
+
+  it('records the shell input in the op', async () => {
+    const provider = new FakeProvider();
+    await provider.shell('abc', { command: ['opencode'], input: 'hola' });
+
+    expect(provider.ops).toEqual([
+      { op: 'shell', id: 'abc', command: ['opencode'], input: 'hola' },
+    ]);
+  });
+
   it('throws a configured error once', async () => {
     const provider = new FakeProvider();
     provider.nextError = new Error('boom');

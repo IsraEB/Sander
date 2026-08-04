@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { expandShortBundles, popBooleanFlag, resolveExecId, resolveSandboxId, parseFlags } from './args';
+import { expandShortBundles, popBooleanFlag, popValueFlag, resolveExecId, resolveSandboxId, parseFlags } from './args';
 import { CliError } from './errors';
 
 describe('resolveSandboxId', () => {
@@ -160,5 +160,65 @@ describe('popBooleanFlag', () => {
     const { argv, value } = popBooleanFlag(['demo', 'extra'], 'skip-setup', ['s']);
     expect(value).toBe(false);
     expect(argv).toEqual(['demo', 'extra']);
+  });
+});
+
+describe('popValueFlag', () => {
+  it('strips a short flag with its value', () => {
+    const { argv, value, missing } = popValueFlag(['-p', 'hola', 'demo'], 'prompt', ['p']);
+    expect(argv).toEqual(['demo']);
+    expect(value).toBe('hola');
+    expect(missing).toBe(false);
+  });
+
+  it('consumes the long form value', () => {
+    const { argv, value, missing } = popValueFlag(['--prompt', 'hola'], 'prompt', ['p']);
+    expect(argv).toEqual([]);
+    expect(value).toBe('hola');
+    expect(missing).toBe(false);
+  });
+
+  it('consumes the --flag=value form', () => {
+    const { argv, value, missing } = popValueFlag(['--prompt=hola', 'demo'], 'prompt', ['p']);
+    expect(argv).toEqual(['demo']);
+    expect(value).toBe('hola');
+    expect(missing).toBe(false);
+  });
+
+  it('marks a missing value at the end', () => {
+    const { argv, value, missing } = popValueFlag(['-p'], 'prompt', ['p']);
+    expect(argv).toEqual([]);
+    expect(value).toBeUndefined();
+    expect(missing).toBe(true);
+  });
+
+  it('marks a missing value before another flag and keeps that flag', () => {
+    const { argv, value, missing } = popValueFlag(['-p', '--attach', 'demo'], 'prompt', ['p']);
+    expect(argv).toEqual(['--attach', 'demo']);
+    expect(value).toBeUndefined();
+    expect(missing).toBe(true);
+  });
+
+  it('is a no-op when the flag is absent', () => {
+    const { argv, value, missing } = popValueFlag(['demo', '--attach'], 'prompt', ['p']);
+    expect(argv).toEqual(['demo', '--attach']);
+    expect(value).toBeUndefined();
+    expect(missing).toBe(false);
+  });
+
+  it('strips every occurrence and lets the last value win', () => {
+    const { argv, value, missing } = popValueFlag(['-p', 'a', '--prompt', 'b', 'demo'], 'prompt', ['p']);
+    expect(argv).toEqual(['demo']);
+    expect(value).toBe('b');
+    expect(missing).toBe(false);
+  });
+
+  it('preserves the order of the remaining tokens', () => {
+    const { argv } = popValueFlag(['demo', '--prompt', 'hola', 'tail'], 'prompt', ['p']);
+    expect(argv).toEqual(['demo', 'tail']);
+  });
+
+  it('does not bundle a value flag inside a short bundle', () => {
+    expect(expandShortBundles(['-ps'], ['s', 'x', 'y'])).toEqual(['-ps']);
   });
 });

@@ -12,6 +12,7 @@ import type { WorktreeRef } from '../../worktree/worktree';
 import { supervisorScriptSource } from '../../setup/supervisor';
 import { runCli } from '../main';
 import type { CliDeps } from '../deps';
+import { CliError } from '../errors';
 import { resolveRequiredConfig, parseCreateArgs } from './create';
 import type { CreateRequest } from '../../provider/provider';
 import { loadRegistry } from '../../registry/registry';
@@ -1457,14 +1458,14 @@ describe('sander create', () => {
       expect(loadRegistry(configDir).boxes.demo).toBeDefined();
     });
 
-    it('create --agent is the long form', async () => {
+    it('create --quick-agent is the long form', async () => {
       const configDir = tmpDir();
       const project = makeProject();
       const ctx = makeCtx(configDir, project);
       ctx.provider.hasAgentSessionResult = false;
       ctx.provider.shellResult = 7;
 
-      const code = await runIn(project, ctx, ['create', '--agent', 'demo']);
+      const code = await runIn(project, ctx, ['create', '--quick-agent', 'demo']);
 
       expect(code).toBe(7);
       expect(ctx.stderr.text()).toContain('launching opencode');
@@ -1546,6 +1547,122 @@ describe('sander create', () => {
       ]);
     });
 
+    it('create -p launches the harness and injects the prompt', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.hasAgentSessionResult = false;
+
+      const code = await runIn(project, ctx, ['create', '-p', 'hola', 'demo']);
+
+      expect(code).toBe(0);
+      expect(ctx.stdout.text()).toContain('Created sandbox "demo"');
+      expect(ctx.stderr.text()).toContain('launching opencode');
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'shell', id: 'demo', command: ['opencode'], input: 'hola' },
+      ]);
+      expect(loadRegistry(configDir).boxes.demo).toBeDefined();
+    });
+
+    it('create --prompt is the long form of -p', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.hasAgentSessionResult = false;
+
+      const code = await runIn(project, ctx, ['create', '--prompt', 'hola', 'demo']);
+
+      expect(code).toBe(0);
+      expect(ctx.stderr.text()).toContain('launching opencode');
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'shell', id: 'demo', command: ['opencode'], input: 'hola' },
+      ]);
+    });
+
+    it('create -p with --agent combines the prompt and the agent argv', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.hasAgentSessionResult = false;
+
+      const code = await runIn(project, ctx, ['create', '-p', 'hola', '--agent', 'orquestator', 'demo']);
+
+      expect(code).toBe(0);
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'shell', id: 'demo', command: ['opencode', '--agent', 'orquestator'], input: 'hola' },
+      ]);
+    });
+
+    it('create -y with --agent passes the agent argv to the harness launch', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.hasAgentSessionResult = false;
+
+      const code = await runIn(project, ctx, ['create', '-y', 'demo', '--agent', 'orquestator']);
+
+      expect(code).toBe(0);
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'shell', id: 'demo', command: ['opencode', '--agent', 'orquestator'] },
+      ]);
+    });
+
+    it('create --agent without a quick-start warns and does not launch', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const code = await runIn(project, ctx, ['create', '--agent', 'orquestator', 'demo']);
+
+      expect(code).toBe(0);
+      expect(ctx.stderr.text()).toContain('has no effect');
+      expect(interactiveOps(ctx)).toHaveLength(0);
+      expect(loadRegistry(configDir).boxes.demo).toBeDefined();
+    });
+
+    it('create -p warns and attaches when an agent session is already running', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const code = await runIn(project, ctx, ['create', '-p', 'hola', 'demo']);
+
+      expect(code).toBe(0);
+      expect(ctx.stderr.text()).toContain('--prompt/--agent are ignored');
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'attach', id: 'demo', opts: { tty: true } },
+      ]);
+    });
+
+    it('create -p requires a value', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const code = await runIn(project, ctx, ['create', '-p']);
+
+      expect(code).toBe(1);
+      expect(ctx.stderr.text()).toContain('--prompt requires a value: pass --prompt <text>');
+      expect(ctx.provider.ops).toHaveLength(0);
+    });
+
+    it('create --agent requires a value', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const code = await runIn(project, ctx, ['create', '--agent']);
+
+      expect(code).toBe(1);
+      expect(ctx.stderr.text()).toContain('--agent requires a value: pass --agent <name>');
+      expect(ctx.provider.ops).toHaveLength(0);
+    });
+
     it('quick-start never runs when create fails', async () => {
       const configDir = tmpDir();
       const project = makeProject();
@@ -1568,7 +1685,9 @@ describe('sander create', () => {
 
       expect(code).toBe(0);
       expect(ctx.stdout.text()).toContain('--attach');
-      expect(ctx.stdout.text()).toContain('--agent');
+      expect(ctx.stdout.text()).toContain('--quick-agent');
+      expect(ctx.stdout.text()).toContain('--prompt');
+      expect(ctx.stdout.text()).toContain('--agent <name>');
       expect(ctx.stdout.text()).toContain('-xy');
     });
 
@@ -1586,6 +1705,44 @@ describe('sander create', () => {
         skipInstall: true,
         skipStart: true,
       });
+    });
+
+    it('parseCreateArgs resolves -p into the prompt and keeps the boolean off', () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const opts = parseCreateArgs(['-p', 'hola', 'demo'], ctx.deps);
+
+      expect(opts).toMatchObject({
+        id: 'demo',
+        prompt: 'hola',
+        agent: false,
+        agentName: undefined,
+      });
+    });
+
+    it('parseCreateArgs resolves --agent <name> with -y into the agent quick-start', () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const opts = parseCreateArgs(['--agent', 'orquestator', '-y', 'demo'], ctx.deps);
+
+      expect(opts).toMatchObject({
+        id: 'demo',
+        agent: true,
+        agentName: 'orquestator',
+        prompt: undefined,
+      });
+    });
+
+    it('parseCreateArgs rejects an unbundled -ps token', () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      expect(() => parseCreateArgs(['-ps', 'demo'], ctx.deps)).toThrow(CliError);
     });
   });
 
