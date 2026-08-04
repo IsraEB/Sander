@@ -13,6 +13,7 @@ export interface CliDeps {
   harnessFactory: HarnessFactory;
   worktree: Worktree;
   prompt?: (question: string) => string | undefined;
+  promptSecret?: (question: string) => string | undefined;
   selectorKeySource?: KeySource;
   gitRunner?: CommandRunner;
   dockerRunner?: AsyncCommandRunner;

@@ -7,6 +7,7 @@ import {
   HARNESS_OPTIONS,
   HARNESS_OTHER,
   PROVIDER_OPTIONS,
+  createSecretPrompt,
   interactiveNeededError,
   missingKeysError,
   otherNameError,
@@ -213,6 +214,43 @@ describe('runConfigWizard token question', () => {
       message = err instanceof Error ? err.message : String(err);
     }
     expect(message).not.toContain('token');
+    expect(out.text()).toBe('');
+  });
+
+  it('asks the token through promptSecret and the harness name through prompt', async () => {
+    const out = new CaptureStream();
+    const asked: string[] = [];
+    const config = await runConfigWizard(
+      {
+        input: {} as NodeJS.ReadableStream,
+        output: out,
+        keySource: keysSource(['enter', '4']),
+        prompt: (q) => {
+          asked.push(q);
+          return 'my-harness';
+        },
+        promptSecret: (q) => {
+          asked.push(q);
+          return 'ghp_secret';
+        },
+      },
+      {},
+      ['provider', 'harness', 'token'],
+    );
+    expect(config).toEqual({ provider: 'docker', harness: 'my-harness', token: 'ghp_secret' });
+    expect(asked).toEqual(['Harness (other): ', 'Token (optional; leave blank for none): ']);
+  });
+
+  it('falls back to the plain prompt when promptSecret is not provided', async () => {
+    const out = new CaptureStream();
+    const config = await runConfigWizard(deps([], out, () => 'ghp_secret'), {}, ['token']);
+    expect(config).toEqual({ token: 'ghp_secret' });
+  });
+
+  it('createSecretPrompt returns undefined without a TTY input', () => {
+    const out = new CaptureStream();
+    const prompt = createSecretPrompt({} as NodeJS.ReadableStream, out);
+    expect(prompt('Token: ')).toBeUndefined();
     expect(out.text()).toBe('');
   });
 });

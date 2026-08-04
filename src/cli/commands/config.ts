@@ -12,6 +12,10 @@ import type { WizardDeps } from '../../config/wizard';
 const TOP_LEVEL_KEYS = ['provider', 'harness', 'token', 'yolo'] as const;
 type TopLevelKey = (typeof TOP_LEVEL_KEYS)[number];
 
+// The token is a secret: bulk listings always redact it. An explicit
+// "config get token" still prints the real value via readEntry.
+const SECRET_REDACTION = '***';
+
 interface Scope {
   dir: string;
   label: string;
@@ -118,7 +122,13 @@ function setEntry(config: GlobalConfig, parsed: ParsedKey, value: string): Globa
     config.yolo = parseYoloValue(value);
     return config;
   }
-  config[parsed.section as Exclude<TopLevelKey, 'yolo'>] = value;
+  if (parsed.section === 'token') {
+    // Trimmed like the flag (flagValue) and wizard (askForToken) paths.
+    // env.<KEY> is NEVER trimmed: env values may contain legitimate spaces.
+    config.token = value.trim();
+    return config;
+  }
+  config[parsed.section as Exclude<TopLevelKey, 'yolo' | 'token'>] = value;
   return config;
 }
 
@@ -152,7 +162,7 @@ function listEntries(config: GlobalConfig): string {
   for (const key of TOP_LEVEL_KEYS) {
     const value = config[key];
     if (value !== undefined) {
-      lines.push(`${key} = ${value}`);
+      lines.push(`${key} = ${key === 'token' ? SECRET_REDACTION : value}`);
     }
   }
   const env = config.env;
@@ -189,10 +199,11 @@ function runConfigSet(deps: CliDeps, scope: Scope, args: string[]): number {
   } else if (valueArg.trim() === '') {
     throw new CliError(`empty value for "${keyArg}": pass sander config set ${keyArg} <value>`);
   }
+  const storedValue = parsed.section === 'token' ? valueArg.trim() : valueArg;
   const config = scope.read();
-  setEntry(config, parsed, valueArg);
+  setEntry(config, parsed, storedValue);
   scope.write(config);
-  deps.stdout.write(`Set ${keyArg} to "${valueArg}" in ${scope.label} config.\n`);
+  deps.stdout.write(`Set ${keyArg} to "${storedValue}" in ${scope.label} config.\n`);
   return 0;
 }
 
@@ -301,6 +312,7 @@ function wizardDeps(deps: CliDeps): WizardDeps {
     output: deps.stderr,
     keySource: deps.selectorKeySource,
     prompt: deps.prompt ?? (() => undefined),
+    promptSecret: deps.promptSecret,
   };
 }
 
@@ -322,7 +334,12 @@ async function runConfigBare(deps: CliDeps, scope: Scope, flags: Record<string, 
   if (ask.length > 0) {
     const noPromptError = missing.length > 0 ? () => missingKeysError(missing) : interactiveNeededError;
     const answered = await runConfigWizard(wizardDeps(deps), global, [...ask], noPromptError);
-    saveConfig(deps.configDir, answered);
+    // Only persist when the wizard actually changed something: in a non-TTY run
+    // where only the optional token is askable, the wizard returns the config
+    // unchanged and a save would be a redundant rewrite.
+    if (JSON.stringify(answered) !== JSON.stringify(global)) {
+      saveConfig(deps.configDir, answered);
+    }
   }
   const rendered = listEntries(scope.read());
   deps.stdout.write(rendered === '' ? `No config set in the ${scope.label} scope.\n` : `${rendered}\n`);

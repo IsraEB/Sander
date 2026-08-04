@@ -15,7 +15,7 @@ import { helpForCommand, ROOT_HELP } from './help';
 import { BasicHarnessFactory } from '../harness/basic';
 import { createProvider } from '../provider/providers';
 import { GitWorktree } from '../worktree/worktree';
-import { createPrompt } from '../config/wizard';
+import { createPrompt, createSecretPrompt } from '../config/wizard';
 import { run, runAsync } from '../process/run';
 
 export type Command = (deps: CliDeps, argv: string[]) => Promise<number>;
@@ -47,6 +47,7 @@ export function defaultDeps(): CliDeps {
     harnessFactory: new BasicHarnessFactory(),
     worktree: new GitWorktree(),
     prompt: createPrompt(process.stdin, process.stderr),
+    promptSecret: createSecretPrompt(process.stdin, process.stderr),
     gitRunner: (args, opts) => run('git', args, opts),
     dockerRunner: (args, opts) => runAsync('docker', args, opts),
     debug: debugEnv(),

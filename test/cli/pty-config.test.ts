@@ -126,6 +126,12 @@ const CONFIG_STEPS: PtyStep[] = [
   { wait: 'Token (optional', send: '\r', flag: 'sent_token' },
 ];
 
+const SECRET_STEPS: PtyStep[] = [
+  { wait: '1) docker', send: '\r', flag: 'sent_provider' },
+  { wait: 'Other…', send: '\r', flag: 'sent_harness' },
+  { wait: 'Token (optional', send: 'ghp_pty_secret\r', flag: 'sent_token' },
+];
+
 const OTHER_STEPS: PtyStep[] = [
   { wait: '1) docker', send: '\r', flag: 'sent_provider' },
   { wait: 'Other…', send: '4', flag: 'sent_other' },
@@ -191,5 +197,25 @@ describe('sander config on a real PTY', () => {
     expect(result?.output).toContain('wizard cancelled');
     expect(result?.output).toContain('sander config set <key> <value>');
     expect(fs.existsSync(path.join(configDir, 'config.json'))).toBe(false);
+  }, 30000);
+
+  it('hides the token typed into the wizard prompt and persists it', () => {
+    const configDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sander-pty-secret-')), 'config');
+    const { status, stderr, result } = runPty(configDir, SECRET_STEPS, ['node', BIN, 'config']);
+
+    expect(stderr).toBe('');
+    expect(status).toBe(0);
+    expect(result).toBeDefined();
+    expect(result?.exitcode).toBe(0);
+    expect(result?.sent.sent_provider).toBe(true);
+    expect(result?.sent.sent_harness).toBe(true);
+    expect(result?.sent.sent_token).toBe(true);
+    // The typed secret never appears in the terminal output...
+    expect(result?.output).not.toContain('ghp_pty_secret');
+    // ...and the final print redacts it like every bulk listing.
+    expect(result?.output).toContain('token = ***');
+
+    const saved = JSON.parse(fs.readFileSync(path.join(configDir, 'config.json'), 'utf8')) as Record<string, unknown>;
+    expect(saved).toEqual({ provider: 'docker', harness: 'opencode', token: 'ghp_pty_secret' });
   }, 30000);
 });
