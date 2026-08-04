@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { popBooleanFlag, resolveExecId, resolveSandboxId, parseFlags } from './args';
+import { expandShortBundles, popBooleanFlag, resolveExecId, resolveSandboxId, parseFlags } from './args';
 import { CliError } from './errors';
 
 describe('resolveSandboxId', () => {
@@ -90,6 +90,32 @@ describe('parseFlags', () => {
   it('collects positionals, including values consumed by flags', () => {
     const { positionals } = parseFlags(['run', 'abc', '--sandbox', 'x', 'tail']);
     expect(positionals).toEqual(['run', 'abc', 'tail']);
+  });
+});
+
+describe('expandShortBundles', () => {
+  it('expands a bundle of known shorts in order', () => {
+    expect(expandShortBundles(['-xy', 'test'], ['s', 'x', 'y'])).toEqual(['-x', '-y', 'test']);
+  });
+
+  it('expands -yx preserving order', () => {
+    expect(expandShortBundles(['-yx', 'test'], ['s', 'x', 'y'])).toEqual(['-y', '-x', 'test']);
+  });
+
+  it('leaves a single short and long flags untouched', () => {
+    expect(expandShortBundles(['-x', '--attach'], ['s', 'x', 'y'])).toEqual(['-x', '--attach']);
+  });
+
+  it('leaves tokens containing an unknown short untouched', () => {
+    expect(expandShortBundles(['-xz'], ['s', 'x', 'y'])).toEqual(['-xz']);
+  });
+
+  it('expands a bundle containing the existing -s short', () => {
+    expect(expandShortBundles(['-sx'], ['s', 'x', 'y'])).toEqual(['-s', '-x']);
+  });
+
+  it('leaves positionals untouched', () => {
+    expect(expandShortBundles(['demo', 'tail'], ['s', 'x', 'y'])).toEqual(['demo', 'tail']);
   });
 });
 

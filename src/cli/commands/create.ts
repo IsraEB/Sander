@@ -3,7 +3,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { CliError } from '../errors';
 import { helpForCommand } from '../help';
-import { parseFlags, popBooleanFlag } from '../args';
+import { expandShortBundles, parseFlags, popBooleanFlag } from '../args';
+import { runAttach } from './attach';
 import type { CliDeps } from '../deps';
 import { debugEnv } from '../deps';
 import { readGlobalConfig, saveConfig, workspaceLayer } from '../../config/config';
@@ -48,6 +49,8 @@ export interface CreateOptions {
   flags: Partial<Record<RequiredKey, string>>;
   skipInstall: boolean;
   skipStart: boolean;
+  attach: boolean;
+  agent: boolean;
   debug: boolean;
 }
 
@@ -113,8 +116,11 @@ export function resolveRequiredConfig(
 }
 
 export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | null {
-  const { argv: argvClean, value: shortSkipSetup } = popBooleanFlag(argv, 'skip-setup', ['s']);
-  const { flags, positionals } = parseFlags(argvClean);
+  const expanded = expandShortBundles(argv, ['s', 'x', 'y']);
+  const { argv: argvNoSkip, value: shortSkipSetup } = popBooleanFlag(expanded, 'skip-setup', ['s']);
+  const { argv: argvNoAttach, value: shortAttach } = popBooleanFlag(argvNoSkip, 'attach', ['x']);
+  const { argv: argvNoAgent, value: shortAgent } = popBooleanFlag(argvNoAttach, 'agent', ['y']);
+  const { flags, positionals } = parseFlags(argvNoAgent);
   if (flags.help === true) {
     deps.stdout.write(helpForCommand('create'));
     return null;
@@ -126,6 +132,8 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
   const skipSetup = shortSkipSetup || flagOn(flags['skip-setup']);
   const skipInstall = flagOn(flags['skip-install']) || skipSetup;
   const skipStart = flagOn(flags['skip-start']) || skipSetup;
+  const attach = shortAttach || flagOn(flags.attach);
+  const agent = shortAgent || flagOn(flags.agent);
 
   const positionalId = positionals.length > 0 ? positionals[0] : undefined;
   if (positionals.length > 1) {
@@ -168,7 +176,7 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
   }
   validateProviderValue(provider);
 
-  return { id, harness, provider, yolo, token, flags: requiredFlags, skipInstall, skipStart, debug: flagOn(flags.debug) || debugEnv() };
+  return { id, harness, provider, yolo, token, flags: requiredFlags, skipInstall, skipStart, attach, agent, debug: flagOn(flags.debug) || debugEnv() };
 }
 
 interface SyncResult {
@@ -611,6 +619,9 @@ export async function runCreate(deps: CliDeps, argv: string[]): Promise<number> 
   if (envKeys.length > 0) {
     const tokenNote = resolution.token !== undefined ? `GitHub token from ${resolution.source}; ` : '';
     deps.stdout.write(`${tokenNote}Injected ${envKeys.length} environment variable(s) into the box; secrets stay in memory and never touch disk.\n`);
+  }
+  if (opts.attach || opts.agent) {
+    return runAttach(deps, [opts.id], { launchHarness: opts.agent });
   }
   return 0;
 }

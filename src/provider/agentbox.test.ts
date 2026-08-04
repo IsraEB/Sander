@@ -799,6 +799,22 @@ describe('AgentboxProvider', () => {
     expect(calls[0].opts?.tty).toBe(true);
   });
 
+  it('runs a command inside an interactive box session', async () => {
+    const calls: { args: string[]; opts?: PtyOptions }[] = [];
+    const interactive: InteractiveRunner = async (args, opts) => {
+      calls.push({ args, opts });
+      return 3;
+    };
+    const provider = new AgentboxProvider({ interactive, markerPath: path.join(tmpDir(), 'setup-complete.json') });
+
+    const code = await provider.shell('demo', { command: ['opencode'] });
+
+    expect(code).toBe(3);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toEqual(['shell', 'demo', '--', 'opencode']);
+    expect(calls[0].opts?.tty).toBe(true);
+  });
+
   it('maps a docker-invalid id to a docker-safe box name on create', async () => {
     const { provider, calls, gitCalls } = makeProvider();
     await provider.prepareCreate({ id: 'feature/asd-jshdia', provider: 'agentbox', harness: 'opencode', projectRoot: '/tmp/proj' });

@@ -12,7 +12,7 @@ import type { WorktreeRef } from '../../worktree/worktree';
 import { supervisorScriptSource } from '../../setup/supervisor';
 import { runCli } from '../main';
 import type { CliDeps } from '../deps';
-import { resolveRequiredConfig } from './create';
+import { resolveRequiredConfig, parseCreateArgs } from './create';
 import type { CreateRequest } from '../../provider/provider';
 import { loadRegistry } from '../../registry/registry';
 import type { Sandbox } from '../../registry/registry';
@@ -123,6 +123,10 @@ async function runIn(projectRoot: string, ctx: Ctx, args: string[]): Promise<num
 
 function opsOf(ctx: Ctx): string[] {
   return ctx.provider.ops.map((op) => op.op);
+}
+
+function interactiveOps(ctx: Ctx): ProviderOp[] {
+  return ctx.provider.ops.filter((op) => op.op === 'hasAgentSession' || op.op === 'attach' || op.op === 'shell');
 }
 
 function makeWorktree(branch = 'demo'): WorktreeRef {
@@ -1398,6 +1402,191 @@ describe('sander create', () => {
     expect(supervisorExecs(ctx)[0]!.command.join(' ')).toContain('supervisor.sh start');
     expect(installExecs(ctx)).toHaveLength(0);
     expect(loadRegistry(configDir).boxes.demo).toBeDefined();
+  });
+
+  describe('quick-start flags', () => {
+    it('create -x attaches to the new sandbox and propagates the session exit code', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.attachResult = 3;
+
+      const code = await runIn(project, ctx, ['create', '-x', 'demo']);
+
+      expect(code).toBe(3);
+      expect(ctx.stdout.text()).toContain('Created sandbox "demo"');
+      expect(ctx.stdout.text()).toContain('Sandbox "demo" (opencode) session exited with code 3.');
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'attach', id: 'demo', opts: { tty: true } },
+      ]);
+      expect(loadRegistry(configDir).boxes.demo).toBeDefined();
+    });
+
+    it('create --attach is the long form', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.attachResult = 3;
+
+      const code = await runIn(project, ctx, ['create', '--attach', 'demo']);
+
+      expect(code).toBe(3);
+      expect(ctx.stdout.text()).toContain('Sandbox "demo" (opencode) session exited with code 3.');
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'attach', id: 'demo', opts: { tty: true } },
+      ]);
+    });
+
+    it('create -y launches the resolved harness when no agent session runs', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.hasAgentSessionResult = false;
+      ctx.provider.shellResult = 7;
+
+      const code = await runIn(project, ctx, ['create', '-y', 'demo']);
+
+      expect(code).toBe(7);
+      expect(ctx.stderr.text()).toContain('launching opencode');
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'shell', id: 'demo', command: ['opencode'] },
+      ]);
+      expect(loadRegistry(configDir).boxes.demo).toBeDefined();
+    });
+
+    it('create --agent is the long form', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.hasAgentSessionResult = false;
+      ctx.provider.shellResult = 7;
+
+      const code = await runIn(project, ctx, ['create', '--agent', 'demo']);
+
+      expect(code).toBe(7);
+      expect(ctx.stderr.text()).toContain('launching opencode');
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'shell', id: 'demo', command: ['opencode'] },
+      ]);
+    });
+
+    it('create -xy bundles both and the agent wins', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.hasAgentSessionResult = false;
+      ctx.provider.shellResult = 7;
+
+      const code = await runIn(project, ctx, ['create', '-xy', 'demo']);
+
+      expect(code).toBe(7);
+      expect(ctx.stderr.text()).toContain('launching opencode');
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'shell', id: 'demo', command: ['opencode'] },
+      ]);
+      expect(ctx.provider.ops.some((op) => op.op === 'attach')).toBe(false);
+    });
+
+    it('create -yx is order-independent', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.hasAgentSessionResult = false;
+      ctx.provider.shellResult = 7;
+
+      const code = await runIn(project, ctx, ['create', '-yx', 'demo']);
+
+      expect(code).toBe(7);
+      expect(ctx.stderr.text()).toContain('launching opencode');
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'shell', id: 'demo', command: ['opencode'] },
+      ]);
+      expect(ctx.provider.ops.some((op) => op.op === 'attach')).toBe(false);
+    });
+
+    it('create -y attaches instead of launching when an agent session is already running', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const code = await runIn(project, ctx, ['create', '-y', 'demo']);
+
+      expect(code).toBe(0);
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'attach', id: 'demo', opts: { tty: true } },
+      ]);
+      expect(ctx.provider.ops.filter((op) => op.op === 'shell')).toHaveLength(0);
+    });
+
+    it('create -y launches the resolved harness for non-default harnesses', async () => {
+      const configDir = tmpDir();
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ provider: 'docker', harness: 'claude' }),
+      );
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.provider.hasAgentSessionResult = false;
+      ctx.provider.shellResult = 7;
+
+      const code = await runIn(project, ctx, ['create', '-y', 'demo']);
+
+      expect(code).toBe(7);
+      expect(ctx.stderr.text()).toContain('launching claude');
+      expect(interactiveOps(ctx)).toEqual([
+        { op: 'hasAgentSession', id: 'demo' },
+        { op: 'shell', id: 'demo', command: ['claude'] },
+      ]);
+    });
+
+    it('quick-start never runs when create fails', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      await runIn(project, ctx, ['create', '--name', 'demo']);
+
+      const code = await runIn(project, ctx, ['create', '-x', 'demo']);
+
+      expect(code).toBe(1);
+      expect(ctx.stderr.text()).toContain('already exists');
+      expect(interactiveOps(ctx)).toHaveLength(0);
+    });
+
+    it('create help documents the quick-start flags', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const code = await runIn(project, ctx, ['create', '--help']);
+
+      expect(code).toBe(0);
+      expect(ctx.stdout.text()).toContain('--attach');
+      expect(ctx.stdout.text()).toContain('--agent');
+      expect(ctx.stdout.text()).toContain('-xy');
+    });
+
+    it('parseCreateArgs expands bundled shorts into attach/agent/skip-setup', () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const opts = parseCreateArgs(['-sxy', 'demo'], ctx.deps);
+
+      expect(opts).toMatchObject({
+        id: 'demo',
+        attach: true,
+        agent: true,
+        skipInstall: true,
+        skipStart: true,
+      });
+    });
   });
 
   describe('yolo mode', () => {
