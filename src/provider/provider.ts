@@ -80,7 +80,13 @@ export interface Provider {
    * non-regular, non-executable, or unrunnable boxes.
    */
   hasExecutable(id: string, path: string): Promise<boolean>;
-  copy(id: string, source: string, destination: string): Promise<void>;
+  copy(id: string, source: string, destination: string, opts?: { yes?: boolean }): Promise<void>;
+  /**
+   * Box → host file transfer: copy `source` (a path inside the box) to
+   * `destination` (a full host path). All sync-path invocations are
+   * non-interactive: agentbox never prompts.
+   */
+  pull(id: string, source: string, destination: string): Promise<void>;
   stop(id: string): Promise<void>;
   start(id: string): Promise<void>;
   remove(id: string): Promise<void>;

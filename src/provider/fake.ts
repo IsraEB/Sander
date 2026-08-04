@@ -16,7 +16,8 @@ export type ProviderOp =
   | { op: 'shell'; id: string; command?: string[]; input?: string }
   | { op: 'exec'; id: string; command: string[]; cwd?: string }
   | { op: 'hasExecutable'; id: string; path: string }
-  | { op: 'copy'; id: string; source: string; destination: string }
+  | { op: 'copy'; id: string; source: string; destination: string; yes?: boolean }
+  | { op: 'pull'; id: string; source: string; destination: string }
   | { op: 'stop'; id: string }
   | { op: 'start'; id: string }
   | { op: 'remove'; id: string }
@@ -142,14 +143,14 @@ export class FakeProvider implements Provider {
     return this.boxFileState.get(id)?.get(p) ?? this.defaultFileState.get(p) ?? false;
   }
 
-  async copy(id: string, source: string, destination: string): Promise<void> {
+  async copy(id: string, source: string, destination: string, opts: { yes?: boolean } = {}): Promise<void> {
     this.maybeThrow();
     if (this.copyError) {
       const err = this.copyError;
       this.copyError = null;
       throw err;
     }
-    this.ops.push({ op: 'copy', id, source, destination });
+    this.ops.push({ op: 'copy', id, source, destination, ...(opts.yes ? { yes: true } : {}) });
     const files: Record<string, string> = {};
     if (fs.existsSync(source) && fs.statSync(source).isDirectory()) {
       const walk = (dir: string, base: string): void => {
@@ -168,6 +169,16 @@ export class FakeProvider implements Provider {
       files[path.basename(source)] = fs.readFileSync(source, 'utf8');
     }
     this.copiedContents.push({ op: 'copy', id, source, destination, files });
+  }
+
+  async pull(id: string, source: string, destination: string): Promise<void> {
+    this.maybeThrow();
+    if (this.copyError) {
+      const err = this.copyError;
+      this.copyError = null;
+      throw err;
+    }
+    this.ops.push({ op: 'pull', id, source, destination });
   }
 
   async stop(id: string): Promise<void> {

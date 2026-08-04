@@ -425,6 +425,33 @@ describe('AgentboxProvider', () => {
     expect(calls[0].args).toEqual(['cp', '/host/stage', 'demo:/tmp/sander-config/opencode']);
   });
 
+  it('adds --yes to the copy argv only when the non-interactive flag is set', async () => {
+    const { provider, calls } = makeProvider();
+    await provider.copy('demo', '/host/stage', '/tmp/sander-config/opencode', { yes: true });
+    expect(calls[0].args).toEqual(['cp', '--yes', '/host/stage', 'demo:/tmp/sander-config/opencode']);
+  });
+
+  it('pulls files from a box with the box: source form and --yes', async () => {
+    const { provider, calls } = makeProvider();
+    await provider.pull('demo', '/workspace/src/index.ts', '/host/worktree/src/index.ts');
+    expect(calls[0].args).toEqual(['cp', '--yes', 'demo:/workspace/src/index.ts', '/host/worktree/src/index.ts']);
+  });
+
+  it('pulls from the mapped box name', async () => {
+    const { provider, calls } = makeProvider();
+    const name = containerNameForSandbox('feature/asd-jshdia');
+    await provider.pull('feature/asd-jshdia', '/workspace/f.txt', '/host/f.txt');
+    expect(calls[0].args).toEqual(['cp', '--yes', `${name}:/workspace/f.txt`, '/host/f.txt']);
+  });
+
+  it('surfaces a clear CliError when agentbox cp reports the size cap', async () => {
+    const { provider, next } = makeProvider();
+    next.push(result({ exitCode: 1, stderr: 'copy exceeds box.cpMaxBytes (100 MB)' }));
+    const promise = provider.pull('demo', '/workspace/big.bin', '/host/big.bin');
+    await expect(promise).rejects.toThrow(CliError);
+    await expect(promise).rejects.toThrow(/supera el tope de 100 MB de agentbox cp/);
+  });
+
   it('re-owns copied files to the aligned host uid after the cp on non-1000 hosts', async () => {
     const { provider, calls } = makeProvider({ hostUid: 1001, hostGid: 1001 });
     await provider.copy('demo', '/host/stage', '/tmp/sander-config/opencode');
