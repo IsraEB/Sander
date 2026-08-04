@@ -540,6 +540,76 @@ describe('sander config', () => {
     expect(readConfigFile(configDir)).toEqual({ token: 'ghp_secret', harness: 'codex', provider: 'docker' });
   });
 
+  it('bare config sets a token typed into the wizard prompt and persists it', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(configDir, () => 'ghp_secret', keysSource(['enter', 'enter']));
+
+    const code = await runIn(project, ctx, ['config']);
+    expect(code).toBe(0);
+    expect(readConfigFile(configDir)).toEqual({ provider: 'docker', harness: 'opencode', token: 'ghp_secret' });
+  });
+
+  it('bare config keeps an existing token when the wizard prompt is blank', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(configDir, () => '', keysSource(['enter', 'enter']));
+
+    await runIn(project, ctx, ['config', 'set', 'token', 'old']);
+    ctx.stderr.reset();
+    const code = await runIn(project, ctx, ['config']);
+    expect(code).toBe(0);
+    expect(readConfigFile(configDir)).toEqual({ provider: 'docker', harness: 'opencode', token: 'old' });
+  });
+
+  it('bare config leaves the token unset when blank and none was set', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(configDir, () => '', keysSource(['enter', 'enter']));
+
+    const code = await runIn(project, ctx, ['config']);
+    expect(code).toBe(0);
+    expect(readConfigFile(configDir)).toEqual({ provider: 'docker', harness: 'opencode' });
+  });
+
+  it('--token suppresses the token question even in an interactive wizard', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(
+      configDir,
+      () => {
+        throw new Error('prompt must not be called when --token is passed');
+      },
+      keysSource(['enter', 'enter']),
+    );
+
+    const code = await runIn(project, ctx, ['config', '--token', 'ghp_x']);
+    expect(code).toBe(0);
+    expect(readConfigFile(configDir)).toEqual({ token: 'ghp_x', harness: 'opencode', provider: 'docker' });
+  });
+
+  it('full flags without --token ask the token when the wizard is interactive', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(configDir, () => 'ghp_y', keysSource([]));
+
+    const code = await runIn(project, ctx, ['config', '--provider', 'docker', '--harness', 'codex']);
+    expect(code).toBe(0);
+    expect(readConfigFile(configDir)).toEqual({ provider: 'docker', harness: 'codex', token: 'ghp_y' });
+  });
+
+  it('full flags plus --token run with zero prompts (non-TTY)', async () => {
+    const configDir = tmpDir();
+    const project = tmpDir();
+    const ctx = makeCtx(configDir, () => {
+      throw new Error('prompt must not be called when every key is passed as a flag');
+    });
+
+    const code = await runIn(project, ctx, ['config', '--provider', 'docker', '--harness', 'codex', '--token', 't']);
+    expect(code).toBe(0);
+    expect(readConfigFile(configDir)).toEqual({ provider: 'docker', harness: 'codex', token: 't' });
+  });
+
   it('asks only for the missing required keys and persists the answers', async () => {
     const configDir = tmpDir();
     const project = tmpDir();
