@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 import { CliError } from '../errors';
 import { helpForCommand } from '../help';
 import { expandShortBundles, parseFlags, popBooleanFlag, popValueFlag } from '../args';
@@ -45,6 +46,7 @@ export interface CreateOptions {
   harness: string;
   provider: string;
   yolo: boolean;
+  watch: boolean;
   token?: string;
   flags: Partial<Record<RequiredKey, string>>;
   skipInstall: boolean;
@@ -118,7 +120,8 @@ export function resolveRequiredConfig(
 }
 
 export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | null {
-  const expanded = expandShortBundles(argv, ['s', 'x', 'y']);
+  const { argv: argvNoWatch, value: noWatch } = popBooleanFlag(argv, 'no-watch');
+  const expanded = expandShortBundles(argvNoWatch, ['s', 'x', 'y']);
   const { argv: argvNoSkip, value: shortSkipSetup } = popBooleanFlag(expanded, 'skip-setup', ['s']);
   const { argv: argvNoAttach, value: shortAttach } = popBooleanFlag(argvNoSkip, 'attach', ['x']);
   const { argv: argvNoQuickAgent, value: shortQuickAgent } = popBooleanFlag(argvNoAttach, 'quick-agent', ['y']);
@@ -192,7 +195,7 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
   }
   validateProviderValue(provider);
 
-  return { id, harness, provider, yolo, token, flags: requiredFlags, skipInstall, skipStart, attach, agent, agentName, prompt, debug: flagOn(flags.debug) || debugEnv() };
+  return { id, harness, provider, yolo, watch: !noWatch, token, flags: requiredFlags, skipInstall, skipStart, attach, agent, agentName, prompt, debug: flagOn(flags.debug) || debugEnv() };
 }
 
 interface SyncResult {
@@ -376,6 +379,34 @@ async function syncHarnessConfig(provider: Provider, id: string, harnessName: st
   return { injected: allowed.length, note: `synced ${allowed.length} ${harnessName} config file(s) into the box` };
 }
 
+// Host path of the sander CLI binary. From the source tree (vitest) and the
+// compiled tree (dist) it resolves to the same committed bin/sander.js:
+// src/cli/commands -> <root> and dist/cli/commands -> <root>.
+function sanderBinPath(): string {
+  return path.join(__dirname, '..', '..', '..', 'bin', 'sander.js');
+}
+
+// Spawns the sync watcher detached (`node <bin> sync <id> --watch`, supervisor
+// pattern: stdio ignore + unref) so it keeps polling after create exits. The
+// watcher writes its own pid/log under <configDir>/sync and finds the box once
+// the registry is saved. Returns false (after warning) when the spawn fails;
+// the box is still created and registered, sync just stays off.
+function spawnSyncWatcher(warn: (message: string) => void, id: string): boolean {
+  try {
+    const child = spawn(process.execPath, [sanderBinPath(), 'sync', id, '--watch'], {
+      stdio: 'ignore',
+      detached: true,
+    });
+    child.unref();
+    return true;
+  } catch (err) {
+    warn(
+      `Aviso: sync desactivada: no se pudo lanzar el watcher de sync para "${id}" (${err instanceof Error ? err.message : String(err)}).\n`,
+    );
+    return false;
+  }
+}
+
 export async function runCreate(deps: CliDeps, argv: string[]): Promise<number> {
   const opts = parseCreateArgs(argv, deps);
   if (opts === null) {
@@ -454,6 +485,7 @@ export async function runCreate(deps: CliDeps, argv: string[]): Promise<number> 
   const stepYolo = steps.add(`Applying ${effectiveHarness} permission mode`);
   const stepInstall = steps.add('Running .sander/install.sh');
   const stepSupervisor = steps.add('Deploying the service supervisor');
+  const stepWatcher = steps.add('Activando watcher de git');
 
   // Runs one checklist step, driving its status transitions; `skippedWhen`
   // shows a step that turned out not to apply as skipped instead of done.
@@ -574,6 +606,25 @@ export async function runCreate(deps: CliDeps, argv: string[]): Promise<number> 
       } else {
         steps.markSkipped(stepInstall);
         steps.markSkipped(stepSupervisor);
+      }
+
+      // The sync watcher is host-side and independent of the service supervisor:
+      // it spawns whenever the project is git and watch is on, then keeps
+      // polling after create exits. The step is skipped (with a warning that
+      // sync is off) for --no-watch or a non-git project (no host worktree).
+      if (opts.watch && worktreeRef !== null) {
+        await withStep(
+          stepWatcher,
+          async () => spawnSyncWatcher((message) => deps.stderr.write(message), opts.id),
+          (started) => !started,
+        );
+      } else {
+        steps.markSkipped(stepWatcher);
+        if (worktreeRef === null) {
+          steps.log('Aviso: sync desactivada: el proyecto no es un repositorio git; no se levantó el watcher de sync.');
+        } else {
+          steps.log('Aviso: sync desactivada: se pasó --no-watch; no se levantó el watcher de sync.');
+        }
       }
     } catch (err) {
       if (currentStep !== null) {
