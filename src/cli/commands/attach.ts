@@ -4,7 +4,7 @@ import { resolveSandboxId } from '../args';
 import type { CliDeps } from '../deps';
 import { loadRegistry } from '../../registry/registry';
 
-export async function runAttach(deps: CliDeps, argv: string[]): Promise<number> {
+export async function runAttach(deps: CliDeps, argv: string[], opts: { launchHarness?: boolean } = {}): Promise<number> {
   if (argv.includes('-h') || argv.includes('--help')) {
     deps.stdout.write(helpForCommand('attach'));
     return 0;
@@ -34,6 +34,13 @@ export async function runAttach(deps: CliDeps, argv: string[]): Promise<number> 
     const exitCode = await provider.attach(id, { tty: true });
     deps.stdout.write(`Sandbox "${id}" (${box.harness}) session exited with code ${exitCode}.\n`);
     return exitCode;
+  }
+
+  if (opts.launchHarness === true) {
+    deps.stderr.write(`no agent session running in "${id}"; launching ${box.harness}.\n`);
+    const code = await provider.shell(id, { command: [box.harness] });
+    deps.stdout.write(`Sandbox "${id}" (${box.harness}) session exited with code ${code}.\n`);
+    return code;
   }
 
   deps.stderr.write(

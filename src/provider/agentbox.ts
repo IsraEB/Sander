@@ -279,9 +279,13 @@ export class AgentboxProvider implements Provider {
     return r.exitCode === 0 && names.some((n) => ['claude', 'codex', 'opencode'].includes(n)); // mirrors agentbox AGENT_KINDS
   }
 
-  async shell(id: string): Promise<number> {
+  async shell(id: string, opts: { command?: string[] } = {}): Promise<number> {
     this.ensureAgentboxMarker();
-    return this.interactive(['shell', this.boxName(id)], { cwd: this.cwd, env: this.env, tty: true }); // agentbox shell auto-starts the box
+    const argv =
+      opts.command === undefined
+        ? ['shell', this.boxName(id)]
+        : ['shell', this.boxName(id), '--', ...opts.command];
+    return this.interactive(argv, { cwd: this.cwd, env: this.env, tty: true }); // agentbox shell auto-starts the box
   }
 
   async exec(id: string, command: string[], opts: { cwd?: string } = {}): Promise<ExecResult> {

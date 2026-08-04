@@ -8,6 +8,7 @@ import type { ProviderOp } from '../../provider/fake';
 import { FakeHarnessFactory } from '../../harness/fake';
 import { FakeWorktree } from '../../worktree/fake';
 import { runCli } from '../main';
+import { runAttach } from './attach';
 import type { CliDeps } from '../deps';
 import { resolveProviderName } from '../../provider/providers';
 import { emptyRegistry, saveRegistry, upsertBox } from '../../registry/registry';
@@ -283,5 +284,55 @@ describe('sander attach', () => {
 
     expect(code).toBe(0);
     expect(ctx.stdout.text()).toContain('sander attach [<id> | --sandbox <id>]');
+  });
+
+  it('runAttach with launchHarness launches the box harness when no agent session runs', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo'));
+    ctx.provider.hasAgentSessionResult = false;
+    ctx.provider.shellResult = 7;
+
+    const code = await runAttach(ctx.deps, ['demo'], { launchHarness: true });
+
+    expect(code).toBe(7);
+    expect(ctx.provider.ops).toEqual([
+      { op: 'hasAgentSession', id: 'demo' },
+      { op: 'shell', id: 'demo', command: ['opencode'] },
+    ]);
+    expect(ctx.stderr.text()).toContain('launching opencode');
+    expect(ctx.stdout.text()).toContain('Sandbox "demo" (opencode) session exited with code 7.');
+  });
+
+  it('runAttach with launchHarness attaches to the running session instead', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo'));
+    ctx.provider.attachResult = 4;
+
+    const code = await runAttach(ctx.deps, ['demo'], { launchHarness: true });
+
+    expect(code).toBe(4);
+    expect(ctx.provider.ops).toEqual([
+      { op: 'hasAgentSession', id: 'demo' },
+      { op: 'attach', id: 'demo', opts: { tty: true } },
+    ]);
+    expect(ctx.provider.ops.filter((op) => op.op === 'shell')).toHaveLength(0);
+  });
+
+  it('runAttach with launchHarness uses the box harness for the command', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo', { harness: 'claude' }));
+    ctx.provider.hasAgentSessionResult = false;
+
+    const code = await runAttach(ctx.deps, ['demo'], { launchHarness: true });
+
+    expect(code).toBe(0);
+    expect(ctx.provider.ops).toEqual([
+      { op: 'hasAgentSession', id: 'demo' },
+      { op: 'shell', id: 'demo', command: ['claude'] },
+    ]);
+    expect(ctx.stderr.text()).toContain('launching claude');
   });
 });

@@ -58,6 +58,23 @@ export interface ParsedFlags {
   positionals: string[];
 }
 
+// Only tokens of length > 2 starting with a single `-` (not `--`) are
+// candidates; a token is expanded to one token per character only when every
+// character is in `shorts`; anything else passes through byte-for-byte.
+// Ordering of the input is preserved.
+export function expandShortBundles(argv: string[], shorts: string[]): string[] {
+  return argv.flatMap((arg) => {
+    if (arg.length <= 2 || !arg.startsWith('-') || arg.startsWith('--')) {
+      return [arg];
+    }
+    const chars = arg.slice(1).split('');
+    if (chars.every((c) => shorts.includes(c))) {
+      return chars.map((c) => `-${c}`);
+    }
+    return [arg];
+  });
+}
+
 export function popBooleanFlag(argv: string[], name: string, aliases: string[] = []): { argv: string[]; value: boolean } {
   const strip = [`--${name}`, ...aliases.map((a) => (a.startsWith('-') ? a : `-${a}`))];
   return { argv: argv.filter((a) => !strip.includes(a)), value: argv.some((a) => strip.includes(a)) };
