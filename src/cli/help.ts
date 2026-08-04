@@ -15,6 +15,7 @@ Commands:
   rm, destroy, delete, remove   Remove a sandbox
   list     List all registered sandboxes
   logs     Show a sandbox's logs
+  sync     Sync the worktree between the box and the host (one-shot)
 
 Options:
   -h, --help  Show this help
@@ -109,6 +110,25 @@ Environment variables are nested under env.<KEY>. The config file always stays v
       return `Uso: sander list\n\nLista los sandboxes registrados, incluidos los puertos que expone cada uno.`;
     case 'logs':
       return `Usage: sander logs [<id> | --sandbox <id>]\n\nShow a sandbox's service log (.sander/start.log) without entering it.`;
+    case 'sync':
+      return `Uso: sander sync [<id> | --sandbox <id>]
+
+Sincroniza el árbol de trabajo entre el box (/workspace) y el worktree del
+host en ambas direcciones, sin tocar la historia git. Detecta los cambios con
+git status --porcelain -uall en cada lado, planifica con planSync y ejecuta
+las transferencias (agentbox cp con --yes, host→box y box→host), los borrados
+(fs.rmSync en el host, rm en el box) y los conflictos. Imprime un resumen:
+copiados box→host, copiados host→box y conflictos.
+
+Conflictos (no-interactivo): la versión del host se guarda como backup en
+.sander/<rel>.sander-host y se aplica la del box.
+
+Si el proyecto no es git (sin worktree host registrado), la sync desactivada:
+no se transfiere nada. Si el box está caído o una ejecución falla, el ciclo se
+omite con aviso sin abortar.
+
+Limitaciones v1: los borrados de archivos untracked no se detectan; la
+resolución de conflictos es automática (backup + sobrescribir).`;
     default:
       return ROOT_HELP;
   }
