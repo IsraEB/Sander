@@ -57,11 +57,13 @@ Manage sander configuration stored as JSON in the global config file
 config file (<project>/.sander/config.json).
 
 With no subcommand, the --provider/--harness/--token/--yolo flags are written to the
-global config. sander then always asks interactively for the required keys
-(provider, harness) that were not already passed as flags — even when they are
-already configured — showing the current value as the default (Enter keeps it).
-Keys provided via --provider/--harness are never re-asked, so
-"sander config --harness <name> --provider docker" runs with zero prompts.
+global config. sander then always asks interactively for the configurable keys
+(provider, harness, and the optional token) that were not already passed as flags
+— even when they are already configured — showing the current value as the default
+(Enter keeps it). Keys provided via --provider/--harness/--token are never re-asked,
+so "sander config --provider docker --harness codex --token <t>" runs with zero prompts.
+The token prompt always starts blank: pressing Enter leaves the current token (if any)
+untouched; typing a value sets or replaces it. To remove a token use "sander config unset token".
 In a non-terminal environment bare "sander config" fails with an actionable
 error instead: run "sander config list" to view the current config or
 "sander config set <key> <value>" to change it.
@@ -75,7 +77,7 @@ Commands:
 Options:
   --provider <name>  Write the provider to the global config
   --harness <name>   Write the harness to the global config
-  --token <token>    Write the token to the global config (never asked for)
+  --token <token>    Write the token to the global config (the wizard asks for it only when the flag is not passed)
   --yolo <true|false>  Write the yolo default to the global config (never asked for)
   --global           Operate on the global config (default)
   --workspace        Operate on the workspace config

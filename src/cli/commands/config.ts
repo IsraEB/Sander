@@ -6,7 +6,7 @@ import { readGlobalConfig, saveConfig, workspaceLayer } from '../../config/confi
 import type { GlobalConfig } from '../../config/config';
 import { REQUIRED_KEYS, missingRequiredKeys, validateConfiguredKey } from '../../config/configured';
 import type { RequiredKey } from '../../config/configured';
-import { interactiveNeededError, missingKeysError, runConfigWizard } from '../../config/wizard';
+import { interactiveNeededError, missingKeysError, runConfigWizard, WIZARD_KEYS } from '../../config/wizard';
 import type { WizardDeps } from '../../config/wizard';
 
 const TOP_LEVEL_KEYS = ['provider', 'harness', 'token', 'yolo'] as const;
@@ -306,17 +306,19 @@ function wizardDeps(deps: CliDeps): WizardDeps {
 
 async function runConfigBare(deps: CliDeps, scope: Scope, flags: Record<string, string | boolean>): Promise<number> {
   // Bare `sander config` is INTENTIONALLY always interactive. In a TTY it runs
-  // the wizard for every required key not already passed via --provider/--harness
-  // flags — even when everything is already configured — showing the current
-  // value as the selector's starting cursor. In a non-TTY the wizard throws an
-  // actionable error (the selector never renders). Never regress this to the
-  // old "print the config when nothing is missing" shortcut: `sander config list`
-  // is the read-only view.
+  // the wizard for every configurable key (provider, harness, and the optional
+  // token) not already passed as a --provider/--harness/--token flag — even
+  // when everything is already configured — showing the current value as the
+  // selector's starting cursor. In a non-TTY the wizard throws an actionable
+  // error for the required keys (the selector never renders); the optional
+  // token is silently skipped when it cannot be asked. Never regress this to
+  // the old "print the config when nothing is missing" shortcut: `sander config
+  // list` is the read-only view.
   const global = applyConfigFlags(deps, readGlobalConfig(deps.configDir), flags);
   const workspace = workspaceLayer(process.cwd()).read();
   const flagKeys = flagSources(flags);
   const missing = missingRequiredKeys({ global, workspace, flags: flagKeys });
-  const ask = REQUIRED_KEYS.filter((key) => flagKeys[key] === undefined);
+  const ask = WIZARD_KEYS.filter((key) => flagValue(flags, key) === undefined);
   if (ask.length > 0) {
     const noPromptError = missing.length > 0 ? () => missingKeysError(missing) : interactiveNeededError;
     const answered = await runConfigWizard(wizardDeps(deps), global, [...ask], noPromptError);

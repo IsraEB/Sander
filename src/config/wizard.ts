@@ -1,6 +1,6 @@
 import { CliError } from '../cli/errors';
 import type { GlobalConfig } from './config';
-import { validateConfiguredKey } from './configured';
+import { REQUIRED_KEYS, validateConfiguredKey } from './configured';
 import type { RequiredKey } from './configured';
 import { PROVIDERS, PROVIDER_REQUIRES_SETUP } from '../provider/providers';
 import type { ProviderName } from '../provider/providers';
@@ -17,6 +17,15 @@ const QUESTIONS: Record<RequiredKey, Question> = {
   provider: { label: 'Provider', default: 'docker' },
   harness: { label: 'Harness', default: 'opencode' },
 };
+
+// The wizard can ask for the required keys (provider, harness) plus the
+// optional free-text token. `yolo` is intentionally never askable: it has no
+// selector question and is only set via flags or "sander config set yolo".
+export type WizardKey = RequiredKey | 'token';
+
+// Ask order: the required selectors first, then the optional token. The token
+// is the only optional key and is asked last, through the prompt seam.
+export const WIZARD_KEYS: readonly WizardKey[] = ['provider', 'harness', 'token'];
 
 // The provider question is a CLOSED list: the five real providers, with cloud
 // ones visually marked as needing a one-time setup. There is no free-text
@@ -64,9 +73,9 @@ export function missingKeysError(missing: RequiredKey[]): CliError {
 
 export function interactiveNeededError(): CliError {
   return new CliError(
-    'bare "sander config" needs an interactive terminal to ask for provider and harness\n' +
+    'bare "sander config" needs an interactive terminal to ask for provider, harness and token\n' +
       'run "sander config list" to view the current config, or change values with\n' +
-      '"sander config set <key> <value>" or the --provider/--harness flags',
+      '"sander config set <key> <value>" or the --provider/--harness/--token flags',
   );
 }
 
@@ -130,24 +139,53 @@ async function askForKey(deps: WizardDeps, key: RequiredKey, current: string, as
   return result.option.value;
 }
 
+// The token question is free text (never a closed list) through the existing
+// prompt seam. It always starts blank so the secret is never echoed back or
+// prefilled: leaving it blank keeps the current token (or leaves it unset).
+// There is no validation — any non-empty text is accepted.
+function askForToken(deps: WizardDeps, current: string | undefined): string | undefined {
+  const state =
+    current === undefined || current.trim() === ''
+      ? 'optional; leave blank for none'
+      : 'currently set; leave blank to keep it';
+  const raw = deps.prompt ? deps.prompt(`Token (${state}): `) : undefined;
+  if (raw === undefined) {
+    return undefined; // no answer (EOF / non-writing prompt): keep the current value
+  }
+  const value = raw.trim();
+  return value === '' ? undefined : value;
+}
+
 export async function runConfigWizard(
   deps: WizardDeps,
   config: GlobalConfig,
-  keys: RequiredKey[],
+  keys: WizardKey[],
   noPromptError?: () => CliError,
 ): Promise<GlobalConfig> {
   if (keys.length === 0) {
     return { ...config };
   }
+  const required = keys.filter((key): key is RequiredKey =>
+    (REQUIRED_KEYS as readonly string[]).includes(key),
+  );
   if (!isInteractive(deps)) {
-    throw noPromptError ? noPromptError() : missingKeysError(keys);
+    if (required.length === 0) {
+      return { ...config }; // only optional keys: skip silently in non-TTY
+    }
+    throw noPromptError ? noPromptError() : missingKeysError(required);
   }
   const next = { ...config };
-  for (const key of keys) {
+  for (const key of required) {
     const current = next[key] ?? QUESTIONS[key].default;
-    const value = await askForKey(deps, key, current, keys);
+    const value = await askForKey(deps, key, current, required);
     validateConfiguredKey(key, value);
     next[key] = value;
+  }
+  if (keys.includes('token')) {
+    const value = await askForToken(deps, next.token);
+    if (value !== undefined) {
+      next.token = value;
+    }
   }
   return next;
 }

@@ -138,6 +138,85 @@ describe('runConfigWizard selection logic', () => {
   });
 });
 
+describe('runConfigWizard token question', () => {
+  it('asks for the token through the prompt seam after the selectors and stores it', async () => {
+    const out = new CaptureStream();
+    const config = await runConfigWizard(deps(['enter', 'enter'], out, () => 'ghp_secret'), {}, [
+      'provider',
+      'harness',
+      'token',
+    ]);
+    expect(config).toEqual({ provider: 'docker', harness: 'opencode', token: 'ghp_secret' });
+  });
+
+  it('keeps an existing token when the token prompt is left blank', async () => {
+    const out = new CaptureStream();
+    const config = await runConfigWizard(deps([], out, () => ''), { provider: 'docker', harness: 'opencode', token: 'old' }, [
+      'token',
+    ]);
+    expect(config).toEqual({ provider: 'docker', harness: 'opencode', token: 'old' });
+  });
+
+  it('leaves the token unset when blank and none was configured', async () => {
+    const out = new CaptureStream();
+    const config = await runConfigWizard(deps([], out, () => '   '), {}, ['token']);
+    expect(config).toEqual({});
+  });
+
+  it('accepts any non-empty token text (no SAFE_NAME validation)', async () => {
+    const out = new CaptureStream();
+    const config = await runConfigWizard(deps([], out, () => 'ghp_Under_score!9'), {}, ['token']);
+    expect(config).toEqual({ token: 'ghp_Under_score!9' });
+  });
+
+  it('does not consume selector keys for the token question', async () => {
+    const out = new CaptureStream();
+    const config = await runConfigWizard(deps([], out, () => 'x'), {}, ['token']);
+    expect(config).toEqual({ token: 'x' });
+  });
+
+  it('hints the state without revealing the secret', async () => {
+    const out = new CaptureStream();
+    let question = '';
+    const config = await runConfigWizard(
+      deps([], out, (q) => {
+        question = q;
+        return '';
+      }),
+      { provider: 'docker', harness: 'opencode', token: 'secret-token' },
+      ['token'],
+    );
+    expect(config).toEqual({ provider: 'docker', harness: 'opencode', token: 'secret-token' });
+    expect(question).toContain('Token');
+    expect(question).toContain('blank');
+    expect(question).not.toContain('secret-token');
+  });
+
+  it('skips the optional token in a non-TTY when no required key is asked', async () => {
+    const out = new CaptureStream();
+    const config = await runConfigWizard(nonTtyDeps({ output: out }), { provider: 'docker', harness: 'opencode', token: 'keep' }, [
+      'token',
+    ]);
+    expect(config).toEqual({ provider: 'docker', harness: 'opencode', token: 'keep' });
+    expect(out.text()).toBe('');
+  });
+
+  it('throws for required keys in a non-TTY and never mentions token', async () => {
+    const out = new CaptureStream();
+    await expect(runConfigWizard(nonTtyDeps({ output: out }), {}, ['provider', 'harness', 'token'])).rejects.toThrow(
+      missingKeysError(['provider', 'harness']).message,
+    );
+    let message = '';
+    try {
+      await runConfigWizard(nonTtyDeps({ output: out }), {}, ['provider', 'harness', 'token']);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).not.toContain('token');
+    expect(out.text()).toBe('');
+  });
+});
+
 describe('runConfigWizard non-TTY contract', () => {
   it('throws the missing-keys error in a non-TTY without a key source and renders nothing', async () => {
     const out = new CaptureStream();

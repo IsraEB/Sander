@@ -123,12 +123,14 @@ function runPty(configDir: string, steps: PtyStep[], cmd: string[]): PtyRun {
 const CONFIG_STEPS: PtyStep[] = [
   { wait: '1) docker', send: '\r', flag: 'sent_provider' },
   { wait: 'Other…', send: '\r', flag: 'sent_harness' },
+  { wait: 'Token (optional', send: '\r', flag: 'sent_token' },
 ];
 
 const OTHER_STEPS: PtyStep[] = [
   { wait: '1) docker', send: '\r', flag: 'sent_provider' },
   { wait: 'Other…', send: '4', flag: 'sent_other' },
   { wait: 'Harness (other): ', send: 'my-harness\n', flag: 'sent_typed' },
+  { wait: 'Token (optional', send: '\r', flag: 'sent_token' },
 ];
 
 const CANCEL_STEPS: PtyStep[] = [
