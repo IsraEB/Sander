@@ -22,6 +22,18 @@ describe('runInteractive', () => {
     await expect(promise).rejects.toThrow(CliError);
     await expect(promise).rejects.toThrow(/failed to launch/);
   });
+
+  it('injects the input into the child stdin before piping through', async () => {
+    const code = await runInteractive(
+      process.execPath,
+      [
+        '-e',
+        'process.stdin.resume(); let data = ""; process.stdin.on("data", (c) => { data += c; if (data === "hola\\n") process.exit(0); if (data.length > 20) process.exit(1); }); process.stdin.on("end", () => process.exit(data === "hola\\n" ? 0 : 1));',
+      ],
+      { tty: false, input: 'hola' },
+    );
+    expect(code).toBe(0);
+  });
 });
 
 describe('createInteractiveRunner', () => {

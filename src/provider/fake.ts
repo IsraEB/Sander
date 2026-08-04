@@ -13,7 +13,7 @@ export type ProviderOp =
   | { op: 'create'; req: CreateRequest }
   | { op: 'attach'; id: string; opts: AttachOptions }
   | { op: 'hasAgentSession'; id: string }
-  | { op: 'shell'; id: string; command?: string[] }
+  | { op: 'shell'; id: string; command?: string[]; input?: string }
   | { op: 'exec'; id: string; command: string[]; cwd?: string }
   | { op: 'hasExecutable'; id: string; path: string }
   | { op: 'copy'; id: string; source: string; destination: string }
@@ -113,9 +113,14 @@ export class FakeProvider implements Provider {
     return this.hasAgentSessionResult;
   }
 
-  async shell(id: string, opts: { command?: string[] } = {}): Promise<number> {
+  async shell(id: string, opts: { command?: string[]; input?: string } = {}): Promise<number> {
     this.maybeThrow();
-    this.ops.push(opts.command === undefined ? { op: 'shell', id } : { op: 'shell', id, command: opts.command });
+    this.ops.push({
+      op: 'shell',
+      id,
+      ...(opts.command === undefined ? {} : { command: opts.command }),
+      ...(opts.input === undefined ? {} : { input: opts.input }),
+    });
     return this.shellResult;
   }
 

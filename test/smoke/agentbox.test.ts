@@ -45,6 +45,10 @@ class TempHarness implements Harness {
   headlessCommand(prompt: string): string[] {
     return [prompt];
   }
+
+  agentArg(_agent: string): string[] | null {
+    return null;
+  }
 }
 
 class TempHarnessFactory implements HarnessFactory {

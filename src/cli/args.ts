@@ -80,6 +80,40 @@ export function popBooleanFlag(argv: string[], name: string, aliases: string[] =
   return { argv: argv.filter((a) => !strip.includes(a)), value: argv.some((a) => strip.includes(a)) };
 }
 
+export interface ValueFlagResult {
+  argv: string[];
+  value: string | undefined;
+  missing: boolean;
+}
+
+export function popValueFlag(argv: string[], name: string, aliases: string[] = []): ValueFlagResult {
+  const long = `--${name}`;
+  const longEq = `${long}=`;
+  const flags = new Set([long, ...aliases.map((a) => (a.startsWith('-') ? a : `-${a}`))]);
+  const keep: number[] = [];
+  let value: string | undefined;
+  let missing = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith(longEq)) {
+      value = arg.slice(longEq.length);
+      continue;
+    }
+    if (flags.has(arg)) {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('-')) {
+        missing = true;
+        continue;
+      }
+      value = next;
+      i++;
+      continue;
+    }
+    keep.push(i);
+  }
+  return { argv: keep.map((i) => argv[i]), value, missing };
+}
+
 export function parseFlags(argv: string[]): ParsedFlags {
   const flags: Record<string, string | boolean> = {};
   const positionals: string[] = [];

@@ -5,6 +5,10 @@ export interface PtyOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   tty?: boolean;
+  /** Initial text written to the child's stdin (followed by "\n") before the
+   *  parent stdin is piped through. Only meaningful when tty is false (stdio
+   *  ['pipe','inherit','inherit']); ignored in tty mode. */
+  input?: string;
 }
 
 export type InteractiveRunner = (args: string[], opts?: PtyOptions) => Promise<number>;
@@ -18,6 +22,10 @@ export function runInteractive(bin: string, args: string[], opts: PtyOptions = {
       stdio: tty ? 'inherit' : ['pipe', 'inherit', 'inherit'],
     });
     if (!tty && child.stdin) {
+      child.stdin.on('error', () => {});
+      if (opts.input !== undefined) {
+        child.stdin.write(`${opts.input}\n`);
+      }
       process.stdin.pipe(child.stdin);
     }
     child.on('error', () => {

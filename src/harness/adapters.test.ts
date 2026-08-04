@@ -58,6 +58,11 @@ describe('OpenCodeHarness', () => {
     expect(harness.headlessCommand('do it')).toEqual(['run', 'do it']);
   });
 
+  it('exposes the --agent argv for an interactive launch', () => {
+    const harness = new OpenCodeHarness();
+    expect(harness.agentArg('orquestator')).toEqual(['--agent', 'orquestator']);
+  });
+
   it('uses ~/.config/opencode as the config dir', () => {
     const harness = new OpenCodeHarness();
     expect(harness.name).toBe('opencode');
@@ -133,6 +138,11 @@ describe('ClaudeCodeHarness', () => {
     expect(harness.headlessCommand('do it')).toEqual(['-p', 'do it']);
   });
 
+  it('exposes the --agent argv for an interactive launch', () => {
+    const harness = new ClaudeCodeHarness();
+    expect(harness.agentArg('orquestator')).toEqual(['--agent', 'orquestator']);
+  });
+
   it('launches claude interactively with its config-dir', async () => {
     const calls: { args: string[]; opts?: PtyOptions }[] = [];
     const interactive: InteractiveRunner = async (args, opts) => {
@@ -163,5 +173,11 @@ describe('BasicHarnessFactory', () => {
     expect(codex.configDir()).toBe(path.join(os.homedir(), '.config', 'codex'));
     await expect(codex.headless({ prompt: 'hi' })).rejects.toThrow(/not implemented/);
     expect(() => codex.headlessCommand('hi')).toThrow(/not implemented/);
+  });
+
+  it('reports no --agent argv for harnesses without the flag', () => {
+    const factory = new BasicHarnessFactory();
+    const codex = factory.get('codex');
+    expect(codex.agentArg('orquestator')).toBeNull();
   });
 });

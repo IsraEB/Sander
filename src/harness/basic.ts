@@ -28,6 +28,10 @@ export class BasicHarness implements Harness {
   headlessCommand(_prompt: string): string[] {
     throw new CliError(`harness adapter "${this.name}" is not implemented yet`);
   }
+
+  agentArg(_agent: string): string[] | null {
+    return null;
+  }
 }
 
 export class BasicHarnessFactory implements HarnessFactory {

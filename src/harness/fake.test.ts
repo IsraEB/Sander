@@ -46,6 +46,14 @@ describe('FakeHarness', () => {
     const harness = new FakeHarness('opencode');
     expect(harness.headlessCommand('hi')).toEqual(['hi']);
   });
+
+  it('returns the --agent argv by default and honors a configured null', () => {
+    const harness = new FakeHarness('opencode');
+    expect(harness.agentArg('orquestator')).toEqual(['--agent', 'orquestator']);
+
+    harness.agentArgResult = null;
+    expect(harness.agentArg('orquestator')).toBeNull();
+  });
 });
 
 describe('FakeHarnessFactory', () => {

@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { CliError } from '../errors';
 import { helpForCommand } from '../help';
-import { expandShortBundles, parseFlags, popBooleanFlag } from '../args';
+import { expandShortBundles, parseFlags, popBooleanFlag, popValueFlag } from '../args';
 import { runAttach } from './attach';
 import type { CliDeps } from '../deps';
 import { debugEnv } from '../deps';
@@ -50,7 +50,9 @@ export interface CreateOptions {
   skipInstall: boolean;
   skipStart: boolean;
   attach: boolean;
-  agent: boolean;
+  agent: boolean; // -y / --quick-agent
+  agentName?: string; // --agent <name>
+  prompt?: string; // -p / --prompt <text>
   debug: boolean;
 }
 
@@ -119,8 +121,9 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
   const expanded = expandShortBundles(argv, ['s', 'x', 'y']);
   const { argv: argvNoSkip, value: shortSkipSetup } = popBooleanFlag(expanded, 'skip-setup', ['s']);
   const { argv: argvNoAttach, value: shortAttach } = popBooleanFlag(argvNoSkip, 'attach', ['x']);
-  const { argv: argvNoAgent, value: shortAgent } = popBooleanFlag(argvNoAttach, 'agent', ['y']);
-  const { flags, positionals } = parseFlags(argvNoAgent);
+  const { argv: argvNoQuickAgent, value: shortQuickAgent } = popBooleanFlag(argvNoAttach, 'quick-agent', ['y']);
+  const { argv: argvNoPrompt, value: shortPrompt, missing: promptMissing } = popValueFlag(argvNoQuickAgent, 'prompt', ['p']);
+  const { flags, positionals } = parseFlags(argvNoPrompt);
   if (flags.help === true) {
     deps.stdout.write(helpForCommand('create'));
     return null;
@@ -128,12 +131,25 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
   if (flags.token === true) {
     throw new CliError('--token requires a value: pass --token <token>');
   }
+  if (promptMissing || flags.prompt === true) {
+    throw new CliError('--prompt requires a value: pass --prompt <text>');
+  }
+  if (flags.agent === true) {
+    throw new CliError('--agent requires a value: pass --agent <name>');
+  }
 
   const skipSetup = shortSkipSetup || flagOn(flags['skip-setup']);
   const skipInstall = flagOn(flags['skip-install']) || skipSetup;
   const skipStart = flagOn(flags['skip-start']) || skipSetup;
   const attach = shortAttach || flagOn(flags.attach);
-  const agent = shortAgent || flagOn(flags.agent);
+  const agent = shortQuickAgent || flagOn(flags['quick-agent']);
+  const prompt =
+    typeof shortPrompt === 'string' && shortPrompt.trim() !== ''
+      ? shortPrompt.trim()
+      : typeof flags.prompt === 'string' && flags.prompt.trim() !== ''
+        ? flags.prompt.trim()
+        : undefined;
+  const agentName = typeof flags.agent === 'string' && flags.agent.trim() !== '' ? flags.agent.trim() : undefined;
 
   const positionalId = positionals.length > 0 ? positionals[0] : undefined;
   if (positionals.length > 1) {
@@ -176,7 +192,7 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
   }
   validateProviderValue(provider);
 
-  return { id, harness, provider, yolo, token, flags: requiredFlags, skipInstall, skipStart, attach, agent, debug: flagOn(flags.debug) || debugEnv() };
+  return { id, harness, provider, yolo, token, flags: requiredFlags, skipInstall, skipStart, attach, agent, agentName, prompt, debug: flagOn(flags.debug) || debugEnv() };
 }
 
 interface SyncResult {
@@ -620,8 +636,17 @@ export async function runCreate(deps: CliDeps, argv: string[]): Promise<number> 
     const tokenNote = resolution.token !== undefined ? `GitHub token from ${resolution.source}; ` : '';
     deps.stdout.write(`${tokenNote}Injected ${envKeys.length} environment variable(s) into the box; secrets stay in memory and never touch disk.\n`);
   }
-  if (opts.attach || opts.agent) {
-    return runAttach(deps, [opts.id], { launchHarness: opts.agent });
+  if (opts.agentName !== undefined && !opts.agent && opts.prompt === undefined) {
+    deps.stderr.write(
+      `warning: --agent ${opts.agentName} has no effect without a quick-start (-y/--quick-agent or -p/--prompt); ignoring.\n`
+    );
+  }
+  if (opts.attach || opts.agent || opts.prompt !== undefined) {
+    return runAttach(deps, [opts.id], {
+      launchHarness: opts.agent || opts.prompt !== undefined,
+      agent: opts.agentName,
+      prompt: opts.prompt,
+    });
   }
   return 0;
 }
