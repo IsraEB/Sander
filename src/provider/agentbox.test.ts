@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { AgentboxProvider } from './agentbox';
+import { AgentboxProvider, tmuxSessionArgs } from './agentbox';
 import { CliError } from '../cli/errors';
 import type { AsyncCommandRunner, CommandRunner, RunResult } from '../process/run';
 import { run } from '../process/run';
@@ -826,20 +826,32 @@ describe('AgentboxProvider', () => {
     expect(calls[0].opts?.tty).toBe(true);
   });
 
-  it('runs a command inside an interactive box session', async () => {
-    const calls: { args: string[]; opts?: PtyOptions }[] = [];
+  it('runs a command inside a tmux session and attaches through agentbox', async () => {
+    const calls: string[][] = [];
+    const interactiveCalls: { args: string[]; opts?: PtyOptions }[] = [];
     const interactive: InteractiveRunner = async (args, opts) => {
-      calls.push({ args, opts });
+      interactiveCalls.push({ args, opts });
       return 3;
     };
-    const provider = new AgentboxProvider({ interactive, markerPath: path.join(tmpDir(), 'setup-complete.json') });
+    const provider = new AgentboxProvider({
+      interactive,
+      runner: async (args) => {
+        calls.push(args);
+        return result();
+      },
+      markerPath: path.join(tmpDir(), 'setup-complete.json'),
+    });
 
     const code = await provider.shell('demo', { command: ['opencode'] });
 
     expect(code).toBe(3);
+    // The harness session is started detached with agentbox's tmux config…
     expect(calls).toHaveLength(1);
-    expect(calls[0].args).toEqual(['shell', 'demo', '--', 'opencode']);
-    expect(calls[0].opts?.tty).toBe(true);
+    expect(calls[0]).toEqual(['shell', 'demo', '--', 'tmux', 'new-session', '-d', '-s', 'opencode', '-c', '/workspace', "'opencode'", ...tmuxSessionArgs('opencode')]);
+    // …and the user's terminal is handed to agentbox attach so its footer draws.
+    expect(interactiveCalls).toHaveLength(1);
+    expect(interactiveCalls[0].args).toEqual(['attach', 'demo']);
+    expect(interactiveCalls[0].opts?.tty).toBe(true);
   });
 
   it('injects the prompt through a tmux session with a real PTY', async () => {
@@ -860,8 +872,9 @@ describe('AgentboxProvider', () => {
 
     expect(code).toBe(0);
     expect(calls).toHaveLength(1);
-    // The user's terminal attaches to the tmux session running the harness.
-    expect(calls[0].args).toEqual(['shell', 'demo', '--', 'tmux', 'attach', '-t', 'opencode']);
+    // The user's terminal attaches through agentbox's wrapped attach, which
+    // draws the footer at the bottom of the terminal.
+    expect(calls[0].args).toEqual(['attach', 'demo']);
     expect(calls[0].opts?.tty).toBe(true);
     expect(calls[0].opts?.input).toBeUndefined();
   });
@@ -883,7 +896,7 @@ describe('AgentboxProvider', () => {
     await provider.shell('demo', { command: ['opencode', '--agent', 'x'], input: 'hola' });
 
     const box = containerNameForSandbox('demo');
-    expect(calls[0]).toEqual(['shell', box, '--', 'tmux', 'new-session', '-d', '-s', 'opencode', '-c', '/workspace', "'opencode' '--agent' 'x'"]);
+    expect(calls[0]).toEqual(['shell', box, '--', 'tmux', 'new-session', '-d', '-s', 'opencode', '-c', '/workspace', "'opencode' '--agent' 'x'", ...tmuxSessionArgs('opencode')]);
     expect(calls[1]).toEqual(['shell', box, '--', 'tmux', 'capture-pane', '-p', '-t', 'opencode']);
     expect(calls[2]).toEqual(['shell', box, '--', 'tmux', 'send-keys', '-t', 'opencode', '-l', '--', 'hola']);
     expect(calls[3]).toEqual(['shell', box, '--', 'tmux', 'send-keys', '-t', 'opencode', 'Enter']);
