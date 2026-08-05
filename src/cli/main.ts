@@ -23,6 +23,8 @@ export type Command = (deps: CliDeps, argv: string[]) => Promise<number>;
 
 const COMMANDS: Record<string, Command> = {
   create: runCreate,
+  cr: runCreate,
+  new: runCreate,
   setup: runSetup,
   config: runConfig,
   run: runRun,
