@@ -1422,13 +1422,13 @@ describe('sander create', () => {
   });
 
   describe('quick-start flags', () => {
-    it('create -x attaches to the new sandbox and propagates the session exit code', async () => {
+    it('create -a attaches to the new sandbox and propagates the session exit code', async () => {
       const configDir = tmpDir();
       const project = makeProject();
       const ctx = makeCtx(configDir, project);
       ctx.provider.attachResult = 3;
 
-      const code = await runIn(project, ctx, ['create', '-x', 'demo']);
+      const code = await runIn(project, ctx, ['create', '-a', 'demo']);
 
       expect(code).toBe(3);
       expect(ctx.stdout.text()).toContain('Created sandbox "demo"');
@@ -1456,14 +1456,14 @@ describe('sander create', () => {
       ]);
     });
 
-    it('create -y launches the resolved harness when no agent session runs', async () => {
+    it('create -h launches the resolved harness when no agent session runs', async () => {
       const configDir = tmpDir();
       const project = makeProject();
       const ctx = makeCtx(configDir, project);
       ctx.provider.hasAgentSessionResult = false;
       ctx.provider.shellResult = 7;
 
-      const code = await runIn(project, ctx, ['create', '-y', 'demo']);
+      const code = await runIn(project, ctx, ['create', '-h', 'demo']);
 
       expect(code).toBe(7);
       expect(ctx.stderr.text()).toContain('launching opencode');
@@ -1491,14 +1491,14 @@ describe('sander create', () => {
       ]);
     });
 
-    it('create -xy bundles both and the agent wins', async () => {
+    it('create -ah bundles both and the harness quick-start wins', async () => {
       const configDir = tmpDir();
       const project = makeProject();
       const ctx = makeCtx(configDir, project);
       ctx.provider.hasAgentSessionResult = false;
       ctx.provider.shellResult = 7;
 
-      const code = await runIn(project, ctx, ['create', '-xy', 'demo']);
+      const code = await runIn(project, ctx, ['create', '-ah', 'demo']);
 
       expect(code).toBe(7);
       expect(ctx.stderr.text()).toContain('launching opencode');
@@ -1509,14 +1509,14 @@ describe('sander create', () => {
       expect(ctx.provider.ops.some((op) => op.op === 'attach')).toBe(false);
     });
 
-    it('create -yx is order-independent', async () => {
+    it('create -ha is order-independent', async () => {
       const configDir = tmpDir();
       const project = makeProject();
       const ctx = makeCtx(configDir, project);
       ctx.provider.hasAgentSessionResult = false;
       ctx.provider.shellResult = 7;
 
-      const code = await runIn(project, ctx, ['create', '-yx', 'demo']);
+      const code = await runIn(project, ctx, ['create', '-ha', 'demo']);
 
       expect(code).toBe(7);
       expect(ctx.stderr.text()).toContain('launching opencode');
@@ -1527,12 +1527,12 @@ describe('sander create', () => {
       expect(ctx.provider.ops.some((op) => op.op === 'attach')).toBe(false);
     });
 
-    it('create -y attaches instead of launching when an agent session is already running', async () => {
+    it('create -h attaches instead of launching when an agent session is already running', async () => {
       const configDir = tmpDir();
       const project = makeProject();
       const ctx = makeCtx(configDir, project);
 
-      const code = await runIn(project, ctx, ['create', '-y', 'demo']);
+      const code = await runIn(project, ctx, ['create', '-h', 'demo']);
 
       expect(code).toBe(0);
       expect(interactiveOps(ctx)).toEqual([
@@ -1542,7 +1542,7 @@ describe('sander create', () => {
       expect(ctx.provider.ops.filter((op) => op.op === 'shell')).toHaveLength(0);
     });
 
-    it('create -y launches the resolved harness for non-default harnesses', async () => {
+    it('create -h launches the resolved harness for non-default harnesses', async () => {
       const configDir = tmpDir();
       fs.writeFileSync(
         path.join(configDir, 'config.json'),
@@ -1553,7 +1553,7 @@ describe('sander create', () => {
       ctx.provider.hasAgentSessionResult = false;
       ctx.provider.shellResult = 7;
 
-      const code = await runIn(project, ctx, ['create', '-y', 'demo']);
+      const code = await runIn(project, ctx, ['create', '-h', 'demo']);
 
       expect(code).toBe(7);
       expect(ctx.stderr.text()).toContain('launching claude');
@@ -1701,13 +1701,13 @@ describe('sander create', () => {
       expect((loadRegistry(configDir).boxes.demo as Sandbox).harness).toBe('custom');
     });
 
-    it('create -y with --agent passes the agent argv to the harness launch', async () => {
+    it('create -h with --agent passes the agent argv to the harness launch', async () => {
       const configDir = tmpDir();
       const project = makeProject();
       const ctx = makeCtx(configDir, project);
       ctx.provider.hasAgentSessionResult = false;
 
-      const code = await runIn(project, ctx, ['create', '-y', 'demo', '--agent', 'orquestator']);
+      const code = await runIn(project, ctx, ['create', '-h', 'demo', '--agent', 'orquestator']);
 
       expect(code).toBe(0);
       expect(interactiveOps(ctx)).toEqual([
@@ -1774,7 +1774,7 @@ describe('sander create', () => {
       const ctx = makeCtx(configDir, project);
       await runIn(project, ctx, ['create', '--name', 'demo']);
 
-      const code = await runIn(project, ctx, ['create', '-x', 'demo']);
+      const code = await runIn(project, ctx, ['create', '-a', 'demo']);
 
       expect(code).toBe(1);
       expect(ctx.stderr.text()).toContain('already exists');
@@ -1790,26 +1790,30 @@ describe('sander create', () => {
 
       expect(code).toBe(0);
       expect(ctx.stdout.text()).toContain('--attach');
+      expect(ctx.stdout.text()).toContain('-a');
       expect(ctx.stdout.text()).toContain('--quick-agent');
       expect(ctx.stdout.text()).toContain('--prompt');
       expect(ctx.stdout.text()).toContain('--agent <name>');
-      expect(ctx.stdout.text()).toContain('-xy');
+      expect(ctx.stdout.text()).toContain('-g <name>');
+      expect(ctx.stdout.text()).toContain('-ah');
       expect(ctx.stdout.text()).toContain('--harness');
+      expect(ctx.stdout.text()).toContain('-h');
       expect(ctx.stdout.text()).toContain('orquestator');
       expect(ctx.stdout.text()).toContain('Enter');
     });
 
-    it('parseCreateArgs expands bundled shorts into attach/agent/skip-setup', () => {
+    it('parseCreateArgs expands bundled shorts into attach/harness-quick-start/skip-setup', () => {
       const configDir = tmpDir();
       const project = makeProject();
       const ctx = makeCtx(configDir, project);
 
-      const opts = parseCreateArgs(['-sxy', 'demo'], ctx.deps);
+      const opts = parseCreateArgs(['-sah', 'demo'], ctx.deps);
 
       expect(opts).toMatchObject({
         id: 'demo',
         attach: true,
-        agent: true,
+        agent: false,
+        harnessQuickStart: true,
         skipInstall: true,
         skipStart: true,
       });
@@ -1830,20 +1834,44 @@ describe('sander create', () => {
       });
     });
 
-    it('parseCreateArgs resolves --agent <name> with -y into the agent quick-start', () => {
+    it('parseCreateArgs resolves --agent <name> with -h into the harness quick-start', () => {
       const configDir = tmpDir();
       const project = makeProject();
       const ctx = makeCtx(configDir, project);
 
-      const opts = parseCreateArgs(['--agent', 'orquestator', '-y', 'demo'], ctx.deps);
+      const opts = parseCreateArgs(['--agent', 'orquestator', '-h', 'demo'], ctx.deps);
 
       expect(opts).toMatchObject({
         id: 'demo',
-        agent: true,
+        agent: false,
         agentName: 'orquestator',
         prompt: undefined,
-        harnessQuickStart: false,
+        harnessQuickStart: true,
       });
+    });
+
+    it('parseCreateArgs resolves -g into the agent name', () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const opts = parseCreateArgs(['-h', 'demo', '-g', 'orquestator'], ctx.deps);
+
+      expect(opts).toMatchObject({
+        id: 'demo',
+        agent: false,
+        agentName: 'orquestator',
+        prompt: undefined,
+        harnessQuickStart: true,
+      });
+    });
+
+    it('parseCreateArgs rejects -g without a value', () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      expect(() => parseCreateArgs(['-g'], ctx.deps)).toThrow('--agent requires a value');
     });
 
     it('parseCreateArgs resolves bare --harness into the quick-start', () => {
