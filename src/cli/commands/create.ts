@@ -52,10 +52,10 @@ export interface CreateOptions {
   skipInstall: boolean;
   skipStart: boolean;
   attach: boolean;
-  agent: boolean; // -y / --quick-agent / bare --harness
-  agentName?: string; // --agent <name>
+  agent: boolean; // --quick-agent / bare --harness
+  agentName?: string; // -g / --agent <name>
   prompt?: string; // -p / --prompt <text>
-  harnessQuickStart: boolean; // bare --harness
+  harnessQuickStart: boolean; // -h / bare --harness
   debug: boolean;
 }
 
@@ -122,12 +122,15 @@ export function resolveRequiredConfig(
 
 export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | null {
   const { argv: argvNoWatch, value: noWatch } = popBooleanFlag(argv, 'no-watch');
-  const expanded = expandShortBundles(argvNoWatch, ['s', 'x', 'y']);
+  const expanded = expandShortBundles(argvNoWatch, ['s', 'a', 'h']);
   const { argv: argvNoSkip, value: shortSkipSetup } = popBooleanFlag(expanded, 'skip-setup', ['s']);
-  const { argv: argvNoAttach, value: shortAttach } = popBooleanFlag(argvNoSkip, 'attach', ['x']);
-  const { argv: argvNoQuickAgent, value: shortQuickAgent } = popBooleanFlag(argvNoAttach, 'quick-agent', ['y']);
+  const { argv: argvNoAttach, value: shortAttach } = popBooleanFlag(argvNoSkip, 'attach', ['a']);
+  const shortHarness = argvNoAttach.includes('-h');
+  const argvNoHarness = argvNoAttach.filter((a) => a !== '-h');
+  const { argv: argvNoQuickAgent, value: shortQuickAgent } = popBooleanFlag(argvNoHarness, 'quick-agent');
   const { argv: argvNoPrompt, value: shortPrompt, missing: promptMissing } = popValueFlag(argvNoQuickAgent, 'prompt', ['p']);
-  const { flags, positionals } = parseFlags(argvNoPrompt);
+  const { argv: argvNoAgent, value: shortAgent, missing: agentMissing } = popValueFlag(argvNoPrompt, 'agent', ['g']);
+  const { flags, positionals } = parseFlags(argvNoAgent);
   if (flags.help === true) {
     deps.stdout.write(helpForCommand('create'));
     return null;
@@ -138,7 +141,7 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
   if (promptMissing || flags.prompt === true) {
     throw new CliError('--prompt requires a value: pass --prompt <text>');
   }
-  if (flags.agent === true) {
+  if (agentMissing || flags.agent === true) {
     throw new CliError('--agent requires a value: pass --agent <name>');
   }
 
@@ -146,7 +149,7 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
   const skipInstall = flagOn(flags['skip-install']) || skipSetup;
   const skipStart = flagOn(flags['skip-start']) || skipSetup;
   const attach = shortAttach || flagOn(flags.attach);
-  const harnessQuickStart = flags.harness === true; // bare --harness
+  const harnessQuickStart = shortHarness || flags.harness === true; // -h / bare --harness
   const agent = shortQuickAgent || flagOn(flags['quick-agent']);
   const prompt =
     typeof shortPrompt === 'string' && shortPrompt.trim() !== ''
@@ -154,7 +157,7 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
       : typeof flags.prompt === 'string' && flags.prompt.trim() !== ''
         ? flags.prompt.trim()
         : undefined;
-  const agentName = typeof flags.agent === 'string' && flags.agent.trim() !== '' ? flags.agent.trim() : undefined;
+  const agentName = typeof shortAgent === 'string' && shortAgent.trim() !== '' ? shortAgent.trim() : undefined;
 
   const positionalId = positionals.length > 0 ? positionals[0] : undefined;
   if (positionals.length > 1) {
@@ -691,7 +694,7 @@ export async function runCreate(deps: CliDeps, argv: string[]): Promise<number> 
   }
   if (opts.agentName !== undefined && !opts.agent && !opts.harnessQuickStart && opts.prompt === undefined) {
     deps.stderr.write(
-      `warning: --agent ${opts.agentName} has no effect without a quick-start (-y/--quick-agent, --harness or -p/--prompt); ignoring.\n`
+      `warning: --agent ${opts.agentName} has no effect without a quick-start (-h/--harness, --quick-agent or -p/--prompt); ignoring.\n`
     );
   }
   if (opts.attach || opts.agent || opts.harnessQuickStart || opts.prompt !== undefined) {
