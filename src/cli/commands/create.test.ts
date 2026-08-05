@@ -1563,7 +1563,7 @@ describe('sander create', () => {
       ]);
     });
 
-    it('create -p launches the harness and injects the prompt', async () => {
+    it('create -p launches the harness headless with the prompt', async () => {
       const configDir = tmpDir();
       const project = makeProject();
       const ctx = makeCtx(configDir, project);
@@ -1576,7 +1576,7 @@ describe('sander create', () => {
       expect(ctx.stderr.text()).toContain('launching opencode');
       expect(interactiveOps(ctx)).toEqual([
         { op: 'hasAgentSession', id: 'demo' },
-        { op: 'shell', id: 'demo', command: ['opencode'], input: 'hola' },
+        { op: 'shell', id: 'demo', command: ['opencode', 'hola'] },
       ]);
       expect(loadRegistry(configDir).boxes.demo).toBeDefined();
     });
@@ -1593,7 +1593,7 @@ describe('sander create', () => {
       expect(ctx.stderr.text()).toContain('launching opencode');
       expect(interactiveOps(ctx)).toEqual([
         { op: 'hasAgentSession', id: 'demo' },
-        { op: 'shell', id: 'demo', command: ['opencode'], input: 'hola' },
+        { op: 'shell', id: 'demo', command: ['opencode', 'hola'] },
       ]);
     });
 
@@ -1608,7 +1608,7 @@ describe('sander create', () => {
       expect(code).toBe(0);
       expect(interactiveOps(ctx)).toEqual([
         { op: 'hasAgentSession', id: 'demo' },
-        { op: 'shell', id: 'demo', command: ['opencode', '--agent', 'orquestator'], input: 'hola' },
+        { op: 'shell', id: 'demo', command: ['opencode', '--agent', 'orquestator', 'hola'] },
       ]);
     });
 
