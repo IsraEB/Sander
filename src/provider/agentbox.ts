@@ -8,16 +8,32 @@ import type { AttachOptions, BoxInfo, CreateRequest, ExecResult, PortMapping, Pr
 import { agentboxSetupMarkerPath, isAgentboxSetupDone, writeAgentboxSetupMarker } from './agentbox-setup';
 import { containerNameForSandbox } from '../names/sandbox-name';
 import { ensureBoxGitAccess, resolveGitDir } from './gitaccess';
-import { alignBoxUser as alignBoxUserInBox, IMAGE_DEFAULT_UID } from './box-user';
+import { alignBoxUser as alignBoxUserInBox, BOX_WORKTREE, IMAGE_DEFAULT_UID } from './box-user';
 import type { BoxUserExec } from './box-user';
 
 const CREATE_TIMEOUT_MS = 15 * 60 * 1000;
 const ALIGN_TIMEOUT_MS = 120 * 1000;
 const PREPARE_TIMEOUT_MS = 15 * 60 * 1000;
 export const DEFAULT_BASE_IMAGE = 'agentbox/box:dev';
+// Prompt injection timing: how long to wait between typing the prompt text
+// and simulating Enter (agentbox's drive prompt uses the same 200ms), and how
+// long to poll a fresh tmux session for content before typing into it.
+const PROMPT_ENTER_DELAY_MS = 200;
+const SESSION_READY_TIMEOUT_MS = 20 * 1000;
+const SESSION_READY_POLL_MS = 400;
+
+// Shell-quotes a single argv token so the harness command can be passed as one
+// tmux new-session shell-command argument (agentbox does the same).
+function shQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 
 function elapsedMs(startedAt: number): string {
   return `${Math.round(performance.now() - startedAt)}`;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // agentbox's host-side `git fetch` (resolveUseBranch, dist/index.js:2828) probes
@@ -44,6 +60,11 @@ export interface AgentboxProviderOptions {
   alignTimeoutMs?: number;
   providerName?: string;
   debug?: boolean;
+  /** Poll budget for a fresh tmux session to draw content before the prompt is
+   *  typed into it (prompt injection). Tests pass a small value. */
+  sessionReadyTimeoutMs?: number;
+  /** Delay between typing the prompt text and simulating Enter. */
+  promptEnterDelayMs?: number;
 }
 
 interface AgentboxEndpoint {
@@ -115,6 +136,8 @@ export class AgentboxProvider implements Provider {
   private readonly hostUid: number;
   private readonly hostGid: number;
   private readonly alignTimeoutMs: number;
+  private readonly sessionReadyTimeoutMs: number;
+  private readonly promptEnterDelayMs: number;
   private readonly providerName: string;
   private readonly debug: boolean;
 
@@ -131,6 +154,8 @@ export class AgentboxProvider implements Provider {
     this.hostUid = opts.hostUid ?? (typeof process.getuid === 'function' ? process.getuid() : -1);
     this.hostGid = opts.hostGid ?? (typeof process.getgid === 'function' ? process.getgid() : -1);
     this.alignTimeoutMs = opts.alignTimeoutMs ?? ALIGN_TIMEOUT_MS;
+    this.sessionReadyTimeoutMs = opts.sessionReadyTimeoutMs ?? SESSION_READY_TIMEOUT_MS;
+    this.promptEnterDelayMs = opts.promptEnterDelayMs ?? PROMPT_ENTER_DELAY_MS;
     this.providerName = opts.providerName ?? 'docker';
     this.debug = opts.debug ?? false;
   }
@@ -281,12 +306,75 @@ export class AgentboxProvider implements Provider {
 
   async shell(id: string, opts: { command?: string[]; input?: string } = {}): Promise<number> {
     this.ensureAgentboxMarker();
-    const argv =
-      opts.command === undefined
-        ? ['shell', this.boxName(id)]
-        : ['shell', this.boxName(id), '--', ...opts.command];
-    const hasInput = opts.input !== undefined;
-    return this.interactive(argv, { cwd: this.cwd, env: this.env, tty: !hasInput, input: opts.input }); // agentbox shell auto-starts the box
+    if (opts.input === undefined) {
+      const argv =
+        opts.command === undefined
+          ? ['shell', this.boxName(id)]
+          : ['shell', this.boxName(id), '--', ...opts.command];
+      return this.interactive(argv, { cwd: this.cwd, env: this.env, tty: true }); // agentbox shell auto-starts the box
+    }
+    // Prompt injection: the harness runs on a real PTY inside the box (a
+    // tmux session, exactly how agentbox runs agent sessions), the prompt is
+    // typed with tmux send-keys and an Enter is simulated, then the user's
+    // terminal attaches to the session. Piping the prompt into `agentbox
+    // shell` (tty off) would leave the interactive TUI on a non-TTY stdin and
+    // it would never exit.
+    const command = opts.command ?? [];
+    const session = command[0] ?? 'shell';
+    const cmdString = command.map(shQuote).join(' ');
+    const startedAt = performance.now();
+    const start = await this.execInBox(id, null, [
+      'tmux',
+      'new-session',
+      '-d',
+      '-s',
+      session,
+      '-c',
+      BOX_WORKTREE,
+      cmdString,
+    ]);
+    if (start.exitCode !== 0) {
+      throw new CliError(
+        `failed to start the ${session} session in the box (exit ${start.exitCode}${start.stderr ? `: ${start.stderr.trim()}` : ''})`
+      );
+    }
+    await this.waitForSessionContent(id, session);
+    const typed = await this.execInBox(id, null, ['tmux', 'send-keys', '-t', session, '-l', '--', opts.input]);
+    if (typed.exitCode !== 0) {
+      throw new CliError(
+        `failed to type the prompt into the ${session} session (exit ${typed.exitCode}${typed.stderr ? `: ${typed.stderr.trim()}` : ''})`
+      );
+    }
+    await delay(this.promptEnterDelayMs);
+    const enter = await this.execInBox(id, null, ['tmux', 'send-keys', '-t', session, 'Enter']);
+    if (enter.exitCode !== 0) {
+      throw new CliError(
+        `failed to send Enter to the ${session} session (exit ${enter.exitCode}${enter.stderr ? `: ${enter.stderr.trim()}` : ''})`
+      );
+    }
+    this.debugLog(`agentbox shell ${this.boxName(id)} (prompt injection) → ${elapsedMs(startedAt)}ms`);
+    // Hand the user's terminal to the tmux session. Direct tmux attach (not
+    // `agentbox attach`) so custom harness session names work too.
+    return this.interactive(['shell', this.boxName(id), '--', 'tmux', 'attach', '-t', session], {
+      cwd: this.cwd,
+      env: this.env,
+      tty: true,
+    });
+  }
+
+  // Polls the tmux session until it has drawn something, so the prompt is
+  // typed into a live TUI instead of a still-booting pane (mirrors agentbox's
+  // waitForTmuxPaneContent). Best-effort: after `timeoutMs` it proceeds anyway
+  // so a harness that never draws cannot block the session forever.
+  private async waitForSessionContent(id: string, session: string, timeoutMs = this.sessionReadyTimeoutMs): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const probe = await this.execInBox(id, null, ['tmux', 'capture-pane', '-p', '-t', session]);
+      if (probe.exitCode === 0 && probe.stdout.trim() !== '') {
+        return;
+      }
+      await delay(SESSION_READY_POLL_MS);
+    }
   }
 
   async exec(id: string, command: string[], opts: { cwd?: string } = {}): Promise<ExecResult> {

@@ -373,7 +373,7 @@ describe('sander attach', () => {
     expect(ctx.stderr.text()).toContain('ignoring --agent orquestator');
   });
 
-  it('runAttach runs the prompt headless with the harness headless argv', async () => {
+  it('runAttach injects the prompt into the harness launch', async () => {
     const configDir = tmpDir();
     const ctx = makeCtx(configDir);
     register(ctx, makeBox('demo'));
@@ -384,7 +384,7 @@ describe('sander attach', () => {
     expect(code).toBe(0);
     expect(ctx.provider.ops).toEqual([
       { op: 'hasAgentSession', id: 'demo' },
-      { op: 'shell', id: 'demo', command: ['opencode', 'hola'] },
+      { op: 'shell', id: 'demo', command: ['opencode'], input: 'hola' },
     ]);
   });
 
@@ -399,7 +399,7 @@ describe('sander attach', () => {
     expect(code).toBe(0);
     expect(ctx.provider.ops).toEqual([
       { op: 'hasAgentSession', id: 'demo' },
-      { op: 'shell', id: 'demo', command: ['opencode', '--agent', 'x', 'hola'] },
+      { op: 'shell', id: 'demo', command: ['opencode', '--agent', 'x'], input: 'hola' },
     ]);
   });
 

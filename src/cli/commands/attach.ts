@@ -52,15 +52,11 @@ export async function runAttach(
     if (opts.agent !== undefined && agentArgs === null) {
       deps.stderr.write(`warning: harness "${box.harness}" does not support --agent; ignoring --agent ${opts.agent}.\n`);
     }
-    // A prompt runs the harness headless inside the box (`opencode run <prompt>`,
-    // `claude -p <prompt>`, mirroring `sander run`): the interactive TUI never
-    // exits on a non-TTY stdin, so pasting the prompt into it hangs forever.
-    const command = [
-      box.harness,
-      ...(agentArgs ?? []),
-      ...(opts.prompt !== undefined ? harness.headlessCommand(opts.prompt) : []),
-    ];
-    const code = await provider.shell(id, { command });
+    const command = [box.harness, ...(agentArgs ?? [])];
+    // A prompt launches the harness with the prompt typed into its session
+    // and an Enter simulated, as if the user pasted it and pressed enter
+    // (the provider runs the harness on a real PTY via its shell seam).
+    const code = await provider.shell(id, { command, ...(opts.prompt !== undefined ? { input: opts.prompt } : {}) });
     deps.stdout.write(`Sandbox "${id}" (${box.harness}) session exited with code ${code}.\n`);
     return code;
   }

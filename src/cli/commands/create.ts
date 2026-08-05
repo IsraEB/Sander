@@ -52,9 +52,10 @@ export interface CreateOptions {
   skipInstall: boolean;
   skipStart: boolean;
   attach: boolean;
-  agent: boolean; // -y / --quick-agent
+  agent: boolean; // -y / --quick-agent / bare --harness
   agentName?: string; // --agent <name>
   prompt?: string; // -p / --prompt <text>
+  harnessQuickStart: boolean; // bare --harness
   debug: boolean;
 }
 
@@ -145,6 +146,7 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
   const skipInstall = flagOn(flags['skip-install']) || skipSetup;
   const skipStart = flagOn(flags['skip-start']) || skipSetup;
   const attach = shortAttach || flagOn(flags.attach);
+  const harnessQuickStart = flags.harness === true; // bare --harness
   const agent = shortQuickAgent || flagOn(flags['quick-agent']);
   const prompt =
     typeof shortPrompt === 'string' && shortPrompt.trim() !== ''
@@ -195,7 +197,7 @@ export function parseCreateArgs(argv: string[], deps: CliDeps): CreateOptions | 
   }
   validateProviderValue(provider);
 
-  return { id, harness, provider, yolo, watch: !noWatch, token, flags: requiredFlags, skipInstall, skipStart, attach, agent, agentName, prompt, debug: flagOn(flags.debug) || debugEnv() };
+  return { id, harness, provider, yolo, watch: !noWatch, token, flags: requiredFlags, skipInstall, skipStart, attach, agent, agentName, prompt, harnessQuickStart, debug: flagOn(flags.debug) || debugEnv() };
 }
 
 interface SyncResult {
@@ -687,14 +689,14 @@ export async function runCreate(deps: CliDeps, argv: string[]): Promise<number> 
     const tokenNote = resolution.token !== undefined ? `GitHub token from ${resolution.source}; ` : '';
     deps.stdout.write(`${tokenNote}Injected ${envKeys.length} environment variable(s) into the box; secrets stay in memory and never touch disk.\n`);
   }
-  if (opts.agentName !== undefined && !opts.agent && opts.prompt === undefined) {
+  if (opts.agentName !== undefined && !opts.agent && !opts.harnessQuickStart && opts.prompt === undefined) {
     deps.stderr.write(
-      `warning: --agent ${opts.agentName} has no effect without a quick-start (-y/--quick-agent or -p/--prompt); ignoring.\n`
+      `warning: --agent ${opts.agentName} has no effect without a quick-start (-y/--quick-agent, --harness or -p/--prompt); ignoring.\n`
     );
   }
-  if (opts.attach || opts.agent || opts.prompt !== undefined) {
+  if (opts.attach || opts.agent || opts.harnessQuickStart || opts.prompt !== undefined) {
     return runAttach(deps, [opts.id], {
-      launchHarness: opts.agent || opts.prompt !== undefined,
+      launchHarness: opts.agent || opts.harnessQuickStart || opts.prompt !== undefined,
       agent: opts.agentName,
       prompt: opts.prompt,
     });
