@@ -900,6 +900,29 @@ describe('sander create', () => {
     expect(ctx.stdout.text()).toContain('Usage: sander create [<id> | --name <id>]');
   });
 
+  it('supports cr and new as aliases of create', async () => {
+    for (const alias of ['cr', 'new']) {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      const code = await runIn(project, ctx, [alias, 'demo']);
+      expect(code).toBe(0);
+      expect(createReq(ctx).id).toBe('demo');
+      expect(ctx.stdout.text()).toContain('Created sandbox "demo"');
+    }
+  });
+
+  it('shows create help for cr and new', async () => {
+    for (const alias of ['cr', 'new']) {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      const code = await runIn(project, ctx, [alias, '--help']);
+      expect(code).toBe(0);
+      expect(ctx.stdout.text()).toContain('Usage: sander create [<id> | --name <id>]');
+    }
+  });
+
   function createReq(ctx: Ctx): CreateRequest {
     const op = ctx.provider.ops.find((o) => o.op === 'create');
     expect(op).toBeDefined();
