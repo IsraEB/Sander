@@ -28,6 +28,26 @@ function shQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+// tmux subcommands appended after `tmux new-session` (separated by tmux's own
+// `;` command separator, passed verbatim through `agentbox shell -- <argv>`).
+// Mirrors agentbox's session config (buildTmuxSessionArgs): remap the prefix to
+// Ctrl+a (Ctrl+b stays as secondary), enable CSI-u extended-key reporting so
+// the harness can distinguish Shift+Enter from Enter, and turn the session's
+// status bar off — the outer agentbox attach wrapper draws its own footer, and
+// a second bar would double up with it.
+export function tmuxSessionArgs(session: string): string[] {
+  return [
+    ';', 'set', '-g', 'prefix', 'C-a',
+    ';', 'set', '-g', 'prefix2', 'C-b',
+    ';', 'bind-key', 'C-a', 'send-prefix',
+    ';', 'bind-key', 'C-b', 'send-prefix', '-2',
+    ';', 'bind-key', 'd', 'detach-client',
+    ';', 'set', '-g', 'extended-keys', 'on',
+    ';', 'set', '-as', 'terminal-features', ',*:extkeys',
+    ';', 'set', '-t', session, 'status', 'off',
+  ];
+}
+
 function elapsedMs(startedAt: number): string {
   return `${Math.round(performance.now() - startedAt)}`;
 }
@@ -306,22 +326,19 @@ export class AgentboxProvider implements Provider {
 
   async shell(id: string, opts: { command?: string[]; input?: string } = {}): Promise<number> {
     this.ensureAgentboxMarker();
-    if (opts.input === undefined) {
-      const argv =
-        opts.command === undefined
-          ? ['shell', this.boxName(id)]
-          : ['shell', this.boxName(id), '--', ...opts.command];
-      return this.interactive(argv, { cwd: this.cwd, env: this.env, tty: true }); // agentbox shell auto-starts the box
+    if (opts.command === undefined) {
+      return this.interactive(['shell', this.boxName(id)], { cwd: this.cwd, env: this.env, tty: true }); // agentbox shell auto-starts the box
     }
-    // Prompt injection: the harness runs on a real PTY inside the box (a
-    // tmux session, exactly how agentbox runs agent sessions), the prompt is
-    // typed with tmux send-keys and an Enter is simulated, then the user's
-    // terminal attaches to the session. Piping the prompt into `agentbox
-    // shell` (tty off) would leave the interactive TUI on a non-TTY stdin and
-    // it would never exit.
-    const command = opts.command ?? [];
-    const session = command[0] ?? 'shell';
-    const cmdString = command.map(shQuote).join(' ');
+    // Harness launch: the harness runs on a real PTY inside the box (a tmux
+    // session, exactly how agentbox runs agent sessions), configured like
+    // agentbox's own sessions (status off, prefix C-a, extended keys) so the
+    // attach below can wrap the terminal with agentbox's footer. With a
+    // prompt, the prompt is typed with tmux send-keys and an Enter is
+    // simulated before the terminal attaches. Piping the prompt into
+    // `agentbox shell` (tty off) would leave the interactive TUI on a non-TTY
+    // stdin and it would never exit.
+    const session = opts.command[0] ?? 'shell';
+    const cmdString = opts.command.map(shQuote).join(' ');
     const startedAt = performance.now();
     const start = await this.execInBox(id, null, [
       'tmux',
@@ -332,30 +349,35 @@ export class AgentboxProvider implements Provider {
       '-c',
       BOX_WORKTREE,
       cmdString,
+      ...tmuxSessionArgs(session),
     ]);
     if (start.exitCode !== 0) {
       throw new CliError(
         `failed to start the ${session} session in the box (exit ${start.exitCode}${start.stderr ? `: ${start.stderr.trim()}` : ''})`
       );
     }
-    await this.waitForSessionContent(id, session);
-    const typed = await this.execInBox(id, null, ['tmux', 'send-keys', '-t', session, '-l', '--', opts.input]);
-    if (typed.exitCode !== 0) {
-      throw new CliError(
-        `failed to type the prompt into the ${session} session (exit ${typed.exitCode}${typed.stderr ? `: ${typed.stderr.trim()}` : ''})`
-      );
+    if (opts.input !== undefined) {
+      await this.waitForSessionContent(id, session);
+      const typed = await this.execInBox(id, null, ['tmux', 'send-keys', '-t', session, '-l', '--', opts.input]);
+      if (typed.exitCode !== 0) {
+        throw new CliError(
+          `failed to type the prompt into the ${session} session (exit ${typed.exitCode}${typed.stderr ? `: ${typed.stderr.trim()}` : ''})`
+        );
+      }
+      await delay(this.promptEnterDelayMs);
+      const enter = await this.execInBox(id, null, ['tmux', 'send-keys', '-t', session, 'Enter']);
+      if (enter.exitCode !== 0) {
+        throw new CliError(
+          `failed to send Enter to the ${session} session (exit ${enter.exitCode}${enter.stderr ? `: ${enter.stderr.trim()}` : ''})`
+        );
+      }
     }
-    await delay(this.promptEnterDelayMs);
-    const enter = await this.execInBox(id, null, ['tmux', 'send-keys', '-t', session, 'Enter']);
-    if (enter.exitCode !== 0) {
-      throw new CliError(
-        `failed to send Enter to the ${session} session (exit ${enter.exitCode}${enter.stderr ? `: ${enter.stderr.trim()}` : ''})`
-      );
-    }
-    this.debugLog(`agentbox shell ${this.boxName(id)} (prompt injection) → ${elapsedMs(startedAt)}ms`);
-    // Hand the user's terminal to the tmux session. Direct tmux attach (not
-    // `agentbox attach`) so custom harness session names work too.
-    return this.interactive(['shell', this.boxName(id), '--', 'tmux', 'attach', '-t', session], {
+    this.debugLog(`agentbox shell ${this.boxName(id)} (harness launch) → ${elapsedMs(startedAt)}ms`);
+    // Hand the user's terminal to agentbox's wrapped attach: it draws the
+    // same footer (box name, session title) as a plain `sander attach` to an
+    // already-running agent session, and it finds the session we just started
+    // because its name is the harness name (claude/codex/opencode).
+    return this.interactive(['attach', this.boxName(id)], {
       cwd: this.cwd,
       env: this.env,
       tty: true,
