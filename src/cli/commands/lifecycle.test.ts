@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { CaptureStream } from '../../../test/helpers/capture-stream';
 import { FakeProvider } from '../../provider/fake';
 import { FakeHarnessFactory } from '../../harness/fake';
@@ -14,11 +16,21 @@ import { emptyRegistry, loadRegistry, saveRegistry, upsertBox } from '../../regi
 import type { Sandbox } from '../../registry/registry';
 import { containerNameForSandbox } from '../../names/sandbox-name';
 import { GitWorktree, deriveWorktreeRef } from '../../worktree/worktree';
+import { isProcessAlive, writePid } from '../../sync/watcher-state';
 import { run } from '../../process/run';
 import type { CommandRunner } from '../../process/run';
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'sander-lifecycle-test-'));
+}
+
+function waitForExit(proc: ChildProcess): Promise<void> {
+  if (proc.exitCode !== null || proc.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    proc.once('close', () => resolve());
+  });
 }
 
 interface Ctx {
@@ -903,6 +915,80 @@ describe('sander rm', () => {
     expect(ctx.stderr.text()).toContain('no se pudo eliminar la rama "demo"');
     expect(boxStatus(ctx, 'demo')).toBeDefined();
     expect(ctx.stdout.text()).not.toContain('Removed sandbox');
+  });
+
+  it('rm stops the watcher by pidfile and removes its pid and log', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo'));
+    seedContainer(ctx, 'demo');
+    const proc = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    const pid = proc.pid!;
+    writePid(configDir, 'demo', pid);
+    fs.writeFileSync(path.join(configDir, 'sync', 'demo.log'), 'old log\n');
+
+    const code = await runCli(['rm', 'demo'], ctx.deps);
+
+    expect(code).toBe(0);
+    expect(opsOf(ctx)).toEqual(['list', 'remove']);
+    expect(ctx.stderr.text()).toContain('Deteniendo el watcher de sync');
+    await waitForExit(proc);
+    expect(isProcessAlive(pid)).toBe(false);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.pid'))).toBe(false);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.log'))).toBe(false);
+    expect(boxStatus(ctx, 'demo')).toBeUndefined();
+  });
+
+  it('rm is idempotent when the watcher is already stopped or was never started', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo'));
+
+    const code = await runCli(['rm', 'demo'], ctx.deps);
+
+    expect(code).toBe(0);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.pid'))).toBe(false);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.log'))).toBe(false);
+    expect(ctx.stderr.text()).toContain('no hay watcher de sync');
+    expect(boxStatus(ctx, 'demo')).toBeUndefined();
+    expect(ctx.stdout.text()).toContain('Removed sandbox "demo".');
+  });
+
+  it('rm cleans a stale watcher pidfile and log when the watcher is already dead', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    register(ctx, makeBox('demo'));
+    const proc = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+    await waitForExit(proc);
+    writePid(configDir, 'demo', proc.pid!);
+    fs.writeFileSync(path.join(configDir, 'sync', 'demo.log'), 'stale log\n');
+
+    const code = await runCli(['rm', 'demo'], ctx.deps);
+
+    expect(code).toBe(0);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.pid'))).toBe(false);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'demo.log'))).toBe(false);
+    expect(boxStatus(ctx, 'demo')).toBeUndefined();
+  });
+
+  it('rm stops the watcher for an unregistered id too', async () => {
+    const configDir = tmpDir();
+    const ctx = makeCtx(configDir);
+    const project = tmpDir();
+    seedContainer(ctx, 'ghost');
+    const proc = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    const pid = proc.pid!;
+    writePid(configDir, 'ghost', pid);
+    fs.writeFileSync(path.join(configDir, 'sync', 'ghost.log'), 'old log\n');
+
+    const code = await runIn(project, ctx, ['rm', 'ghost']);
+
+    expect(code).toBe(0);
+    expect(opsOf(ctx)).toEqual(['list', 'remove']);
+    await waitForExit(proc);
+    expect(isProcessAlive(pid)).toBe(false);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'ghost.pid'))).toBe(false);
+    expect(fs.existsSync(path.join(configDir, 'sync', 'ghost.log'))).toBe(false);
   });
 
   it('rm with an unfixable foreign-uid admin dir falls back to update-ref, emits an Aviso with remediation, and exits 0', async () => {

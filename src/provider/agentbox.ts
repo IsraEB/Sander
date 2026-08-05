@@ -312,8 +312,9 @@ export class AgentboxProvider implements Provider {
     return result.exitCode === 0;
   }
 
-  async copy(id: string, source: string, destination: string): Promise<void> {
-    await this.runAgentbox(['cp', source, `${this.boxName(id)}:${destination}`]);
+  async copy(id: string, source: string, destination: string, opts: { yes?: boolean } = {}): Promise<void> {
+    const argv = ['cp', ...(opts.yes ? ['--yes'] : []), source, `${this.boxName(id)}:${destination}`];
+    await this.runAgentbox(argv);
     // agentbox cp chowns the copied files to uid 1000 (the image default box
     // user). After the alignment bootstrap the box user is the host uid, so
     // re-own the copy as root. Best-effort: a failure surfaces later when the
@@ -334,6 +335,27 @@ export class AgentboxProvider implements Provider {
         );
       }
     }
+  }
+
+  // agentbox cp caps a transfer at box.cpMaxBytes (100 MB default). sander
+  // surfaces that cap as a clear CliError instead of a prompt or a silently
+  // truncated copy; `--yes` keeps every sync-path transfer non-interactive.
+  private async runAgentboxCp(argv: string[]): Promise<RunResult> {
+    try {
+      return await this.runAgentbox(argv);
+    } catch (err) {
+      if (err instanceof CliError) {
+        const detail = err.message.replace(/^agentbox cp failed: ?/, '');
+        if (/cpMaxBytes|max\s*bytes|exceed|too (large|big)|100\s*MB|capacity/i.test(detail)) {
+          throw new CliError(`agentbox cp failed: ${detail} (supera el tope de 100 MB de agentbox cp; box.cpMaxBytes)`);
+        }
+      }
+      throw err;
+    }
+  }
+
+  async pull(id: string, source: string, destination: string): Promise<void> {
+    await this.runAgentboxCp(['cp', '--yes', `${this.boxName(id)}:${source}`, destination]);
   }
 
   async stop(id: string): Promise<void> {

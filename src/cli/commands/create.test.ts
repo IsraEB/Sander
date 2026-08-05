@@ -40,6 +40,21 @@ vi.mock('../../recipes/recipes', async (importOriginal) => {
   };
 });
 
+// create spawns the sync watcher detached by default; the mock keeps the tests
+// from launching a real background `sander sync <id> --watch` process while
+// still letting us assert the spawn call.
+const { spawnMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(() => ({ unref: () => {} })),
+}));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    spawn: spawnMock,
+  };
+});
+
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'sander-create-test-'));
 }
@@ -197,6 +212,7 @@ function hasExecutableOps(ctx: Ctx): Array<Extract<ProviderOp, { op: 'hasExecuta
 describe('sander create', () => {
   beforeEach(() => {
     mockHostDirs.clear();
+    spawnMock.mockClear();
   });
 
   it('creates a box, syncs harness config, and registers it', async () => {
@@ -2088,6 +2104,88 @@ describe('sander create', () => {
           expect(ctx.stderr.text()).not.toContain('[debug]');
         });
       }
+    });
+  });
+
+  describe('sync watcher', () => {
+    const binPath = path.join(__dirname, '..', '..', '..', 'bin', 'sander.js');
+
+    it('spawns the detached sync watcher and records the checklist step done by default', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const code = await runIn(project, ctx, ['create', '--name', 'demo']);
+
+      expect(code).toBe(0);
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(spawnMock).toHaveBeenCalledWith(process.execPath, [binPath, 'sync', 'demo', '--watch'], {
+        stdio: 'ignore',
+        detached: true,
+      });
+      expect(ctx.stderr.text()).toContain('✓ Activando watcher de git');
+      expect(ctx.stderr.text()).not.toContain('sync desactivada');
+    });
+
+    it('--no-watch does not spawn the watcher and marks the step skipped with a warning', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const code = await runIn(project, ctx, ['create', '--name', 'demo', '--no-watch']);
+
+      expect(code).toBe(0);
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(ctx.stderr.text()).toContain('– Activando watcher de git');
+      expect(ctx.stderr.text()).toContain('sync desactivada');
+      expect(ctx.stderr.text()).toContain('--no-watch');
+    });
+
+    it('skips the step and warns when the project is not a git repository', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+      ctx.worktree.createResult = null;
+
+      const code = await runIn(project, ctx, ['create', '--name', 'demo']);
+
+      expect(code).toBe(0);
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(ctx.stderr.text()).toContain('– Activando watcher de git');
+      expect(ctx.stderr.text()).toContain('sync desactivada');
+      expect(ctx.stderr.text()).toContain('no es un repositorio git');
+    });
+
+    it('--no-watch leaves the provider ops and registry writes unchanged', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const code = await runIn(project, ctx, ['create', '--name', 'demo', '--no-watch']);
+
+      expect(code).toBe(0);
+      expect(opsOf(ctx)).toEqual(['create', 'exec', 'copy', 'exec', 'hasExecutable', 'hasExecutable', 'exec', 'copy', 'exec']);
+      expect(loadRegistry(configDir).boxes.demo).toMatchObject({
+        id: 'demo',
+        provider: 'docker',
+        harness: 'opencode',
+        yolo: true,
+        status: 'running',
+      });
+      expect(ctx.stdout.text()).toContain('Created sandbox "demo"');
+    });
+
+    it('documents --no-watch and the untracked-deletions limitation in create help', async () => {
+      const configDir = tmpDir();
+      const project = makeProject();
+      const ctx = makeCtx(configDir, project);
+
+      const code = await runIn(project, ctx, ['create', '--help']);
+
+      expect(code).toBe(0);
+      expect(ctx.stdout.text()).toContain('--no-watch');
+      expect(ctx.stdout.text()).toContain('untracked');
+      expect(ctx.stdout.text()).toContain('Activando watcher de git');
     });
   });
 });

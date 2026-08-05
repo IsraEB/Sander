@@ -9,6 +9,7 @@ import { runRm, runStart, runStop } from './commands/lifecycle';
 import { runList } from './commands/list';
 import { runLogs } from './commands/logs';
 import { runRun } from './commands/run';
+import { runSync } from './commands/sync';
 import type { CliDeps } from './deps';
 import { debugEnv } from './deps';
 import { helpForCommand, ROOT_HELP } from './help';
@@ -35,6 +36,7 @@ const COMMANDS: Record<string, Command> = {
   remove: runRm,
   list: runList,
   logs: runLogs,
+  sync: runSync,
 };
 
 export function defaultDeps(): CliDeps {

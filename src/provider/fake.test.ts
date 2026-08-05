@@ -119,4 +119,25 @@ describe('FakeProvider', () => {
     await expect(provider.copy('abc', '/s', '/d')).rejects.toThrow('cp failed');
     await expect(provider.copy('abc', '/s', '/d')).resolves.toBeUndefined();
   });
+
+  it('records pull operations', async () => {
+    const provider = new FakeProvider();
+    await provider.pull('abc', '/workspace/f.txt', '/host/f.txt');
+    expect(provider.ops).toEqual([{ op: 'pull', id: 'abc', source: '/workspace/f.txt', destination: '/host/f.txt' }]);
+  });
+
+  it('records the yes flag on copy when passed', async () => {
+    const provider = new FakeProvider();
+    await provider.copy('abc', '/s', '/d', { yes: true });
+    expect(provider.ops).toEqual([{ op: 'copy', id: 'abc', source: '/s', destination: '/d', yes: true }]);
+    await provider.copy('abc', '/s', '/d');
+    expect(provider.ops[1]).toEqual({ op: 'copy', id: 'abc', source: '/s', destination: '/d' });
+  });
+
+  it('throws a configured error once on pull', async () => {
+    const provider = new FakeProvider();
+    provider.copyError = new Error('pull failed');
+    await expect(provider.pull('abc', '/s', '/d')).rejects.toThrow('pull failed');
+    await expect(provider.pull('abc', '/s', '/d')).resolves.toBeUndefined();
+  });
 });

@@ -8,6 +8,7 @@ import { launchSupervisor, stopService } from '../../setup/supervisor';
 import { BOX_WORKTREE } from '../../provider/box-user';
 import { containerNameForSandbox } from '../../names/sandbox-name';
 import { deriveWorktreeRef } from '../../worktree/worktree';
+import { stopWatcher } from '../../sync/watcher-state';
 import { DEFAULT_PROVIDER } from '../../provider/providers';
 import type { Provider } from '../../provider/provider';
 import * as path from 'node:path';
@@ -112,11 +113,22 @@ export async function runRm(deps: CliDeps, argv: string[]): Promise<number> {
   // The removal plan is shown up front as a checklist and ticked off as each
   // part finishes, so rm is never silent while it cleans up the box.
   const steps = new StepList({ stream: deps.stderr });
+  const stepWatcher = steps.add('Deteniendo el watcher de sync');
   const stepContainer = steps.add('Removing the sandbox container');
   const stepWorktree = steps.add('Removing the sandbox worktree');
   const stepBranch = steps.add('Deleting the sandbox git branch');
 
   try {
+    // El watcher de sync es un proceso del host con estado derivado del configDir
+    // (<configDir>/sync/<id>.pid/.log), independiente del contenedor y del git: se
+    // detiene ANTES de destruir el contenedor para que ningún ciclo de sync se
+    // intercale con el desmontaje. stopWatcher es idempotente y nunca lanza: con el
+    // watcher ya detenido o inexistente limpia el estado y avisa (el "ya no está"
+    // de rm, igual que con el contenedor), sin que rm falle.
+    await runStep(steps, stepWatcher, async () => {
+      stopWatcher(id, deps.configDir, (message) => steps.log(message.trimEnd()));
+    });
+
     // Contrato: el contenedor se elimina ANTES de los pasos git. agentbox destroy
     // libera la registración del worktree del box en el .git compartido, así que
     // `git branch -D` puede eliminar la rama después. El desacople git solo se
