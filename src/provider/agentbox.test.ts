@@ -842,21 +842,66 @@ describe('AgentboxProvider', () => {
     expect(calls[0].opts?.tty).toBe(true);
   });
 
-  it('injects the shell input through the interactive runner with tty off', async () => {
+  it('injects the prompt through a tmux session with a real PTY', async () => {
     const calls: { args: string[]; opts?: PtyOptions }[] = [];
     const interactive: InteractiveRunner = async (args, opts) => {
       calls.push({ args, opts });
       return 0;
     };
-    const provider = new AgentboxProvider({ interactive, markerPath: path.join(tmpDir(), 'setup-complete.json') });
+    const provider = new AgentboxProvider({
+      interactive,
+      runner: async (args) => ({ exitCode: 0, stdout: 'ready\n', stderr: '' }),
+      markerPath: path.join(tmpDir(), 'setup-complete.json'),
+      sessionReadyTimeoutMs: 50,
+      promptEnterDelayMs: 0,
+    });
 
     const code = await provider.shell('demo', { command: ['opencode'], input: 'hola' });
 
     expect(code).toBe(0);
     expect(calls).toHaveLength(1);
-    expect(calls[0].args).toEqual(['shell', 'demo', '--', 'opencode']);
-    expect(calls[0].opts?.tty).toBe(false);
-    expect(calls[0].opts?.input).toBe('hola');
+    // The user's terminal attaches to the tmux session running the harness.
+    expect(calls[0].args).toEqual(['shell', 'demo', '--', 'tmux', 'attach', '-t', 'opencode']);
+    expect(calls[0].opts?.tty).toBe(true);
+    expect(calls[0].opts?.input).toBeUndefined();
+  });
+
+  it('starts the harness tmux session, types the prompt and simulates Enter', async () => {
+    const calls: string[][] = [];
+    const interactive: InteractiveRunner = async () => 0;
+    const provider = new AgentboxProvider({
+      interactive,
+      runner: async (args) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: 'ready\n', stderr: '' };
+      },
+      markerPath: path.join(tmpDir(), 'setup-complete.json'),
+      sessionReadyTimeoutMs: 50,
+      promptEnterDelayMs: 0,
+    });
+
+    await provider.shell('demo', { command: ['opencode', '--agent', 'x'], input: 'hola' });
+
+    const box = containerNameForSandbox('demo');
+    expect(calls[0]).toEqual(['shell', box, '--', 'tmux', 'new-session', '-d', '-s', 'opencode', '-c', '/workspace', "'opencode' '--agent' 'x'"]);
+    expect(calls[1]).toEqual(['shell', box, '--', 'tmux', 'capture-pane', '-p', '-t', 'opencode']);
+    expect(calls[2]).toEqual(['shell', box, '--', 'tmux', 'send-keys', '-t', 'opencode', '-l', '--', 'hola']);
+    expect(calls[3]).toEqual(['shell', box, '--', 'tmux', 'send-keys', '-t', 'opencode', 'Enter']);
+  });
+
+  it('fails with a CliError when the tmux session cannot start', async () => {
+    const interactive: InteractiveRunner = async () => 0;
+    const provider = new AgentboxProvider({
+      interactive,
+      runner: async () => ({ exitCode: 127, stdout: '', stderr: 'tmux: not found' }),
+      markerPath: path.join(tmpDir(), 'setup-complete.json'),
+      sessionReadyTimeoutMs: 50,
+      promptEnterDelayMs: 0,
+    });
+
+    await expect(provider.shell('demo', { command: ['opencode'], input: 'hola' })).rejects.toThrow(
+      /failed to start the opencode session/
+    );
   });
 
   it('maps a docker-invalid id to a docker-safe box name on create', async () => {
